@@ -1,8 +1,8 @@
 """Stage timings of M28 compression / decompression (cProfile, cumulative)."""
 import cProfile, glob, os, pstats, sys, time
-sys.path.insert(0, "src")
-from repo3 import M28RepoGPU
-from gpuquant import GPUQuant
+sys.path.insert(0, ".")
+from seedpack.repo3 import M28RepoGPU
+from seedpack.gpuquant import GPUQuant
 d = "models/unsloth"
 base_path = os.path.join(d, "Qwen3-0.6B-BF16.gguf")
 files = {os.path.basename(p): p for p in sorted(glob.glob(os.path.join(d, "*.gguf"))) if p != base_path}

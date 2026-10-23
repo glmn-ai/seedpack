@@ -17,9 +17,9 @@ import struct
 
 import numpy as np
 
-import rans
-from codecs_gguf import pack, unpack, zstd_c, zstd_d, xz_c, xz_d
-from gguf_reader import GGUF, GGML_Q8_0, GGML_F32, GGML_F16, GGML_BF16
+from . import rans
+from .codecs_gguf import pack, unpack, zstd_c, zstd_d, xz_c, xz_d
+from .gguf_reader import GGUF, GGML_Q8_0, GGML_F32, GGML_F16, GGML_BF16
 
 GGML_Q4_K, GGML_Q6_K = 12, 14
 N_E, N_M = 8, 4                     # context: reference precision bins x magnitude bins

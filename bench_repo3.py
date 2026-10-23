@@ -5,9 +5,9 @@ Bases = the BF16 GGUFs (model, mmproj); every other GGUF is derived from them; t
 (imatrix, README, ...) is stored as is. Every file is checked by SHA-256 after decompression.
 """
 import glob, hashlib, json, os, sys, time
-sys.path.insert(0, "src")
-from repo3 import M28RepoGPU, M29RepoGPU
-from gpuquant import GPUQuant
+sys.path.insert(0, ".")
+from seedpack.repo3 import M28RepoGPU, M29RepoGPU
+from seedpack.gpuquant import GPUQuant
 
 d = sys.argv[1] if len(sys.argv) > 1 else "models/unsloth"
 arc_path = sys.argv[2] if len(sys.argv) > 2 else os.path.basename(os.path.normpath(d)) + ".varc"

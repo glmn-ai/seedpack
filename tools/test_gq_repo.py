@@ -1,10 +1,10 @@
 """GPU re-quantisation of every (tensor, type) in the repository vs the real files: exactness and speed."""
 import glob, os, sys, time, collections
-sys.path.insert(0, "src")
+sys.path.insert(0, ".")
 import numpy as np, cupy as cp
-from gguf_reader import GGUF, TYPE_NAMES
-from requant import QFUN, load_imatrix
-from gpuquant import GPUQuant
+from seedpack.gguf_reader import GGUF, TYPE_NAMES
+from seedpack.requant import QFUN, load_imatrix
+from seedpack.gpuquant import GPUQuant
 
 d = "models/unsloth"
 base = open(os.path.join(d, "Qwen3-0.6B-BF16.gguf"), "rb").read()

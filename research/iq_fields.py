@@ -10,13 +10,13 @@ import glob
 import os
 import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import numpy as np
 
-from gguf_reader import GGUF
-from repo3 import M29RepoGPU, _keep_base, _read_file, _gguf_tensors
-from requant import load_imatrix
-from seed import bits_per_weight
+from seedpack.gguf_reader import GGUF
+from seedpack.repo3 import M29RepoGPU, _keep_base, _read_file, _gguf_tensors
+from seedpack.requant import load_imatrix
+from seedpack.seed import bits_per_weight
 
 d, pat = sys.argv[1], sys.argv[2]
 imf = sys.argv[sys.argv.index("--imatrix") + 1] if "--imatrix" in sys.argv else None

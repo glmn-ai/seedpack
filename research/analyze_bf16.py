@@ -5,8 +5,8 @@ usage: analyze_bf16.py [gguf] [max tensors]
 """
 import sys, os, time
 import numpy as np
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
-from gguf_reader import GGUF, GGML_BF16
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+from seedpack.gguf_reader import GGUF, GGML_BF16
 
 path = sys.argv[1] if len(sys.argv) > 1 else "models/unsloth/Qwen3-0.6B-BF16.gguf"
 maxt = int(sys.argv[2]) if len(sys.argv) > 2 else 10**9

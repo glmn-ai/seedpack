@@ -14,10 +14,10 @@ import struct
 
 import numpy as np
 
-import rans
-from codecs_gguf import pack, unpack, zstd_c, zstd_d
-from gguf_reader import GGUF, GGML_BF16
-from gpu2 import header_pairs_c, header_pairs_d, xz_chunks_c, xz_chunks_d, rest_of
+from . import rans
+from .codecs_gguf import pack, unpack, zstd_c, zstd_d
+from .gguf_reader import GGUF, GGML_BF16
+from .gpu2 import header_pairs_c, header_pairs_d, xz_chunks_c, xz_chunks_d, rest_of
 
 
 def _contexts(rfi, cfi, ex=None):

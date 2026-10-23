@@ -1,10 +1,10 @@
 """No-seed QR coding of a single quant file: round trip + size per type vs zstd -19."""
 import os, sys, time
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import numpy as np, cupy as cp, zstandard
-import qr
+from seedpack import qr
 qr.STATS = {}
-from gguf_reader import GGUF, TYPE_NAMES
+from seedpack.gguf_reader import GGUF, TYPE_NAMES
 g = GGUF(sys.argv[1], light=True)
 z = zstandard.ZstdCompressor(level=19)
 by = {}

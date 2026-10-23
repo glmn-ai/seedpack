@@ -18,8 +18,11 @@ _DIV = re.compile(r"div\.rn\.f32\s+(%\w+),\s*(%\w+),\s*0[fF]([0-9A-Fa-f]{8});")
 
 def _nvjitlink():
     import nvidia
-    pats = [os.path.join(p, "**", "nvJitLink*.dll") for p in nvidia.__path__]
-    dll = next(f for p in pats for f in glob.glob(p, recursive=True))
+    name = "nvJitLink*.dll" if os.name == "nt" else "libnvJitLink.so*"
+    pats = [os.path.join(p, "**", name) for p in nvidia.__path__]
+    dll = next((f for p in pats for f in glob.glob(p, recursive=True)), None)
+    if dll is None:
+        raise RuntimeError("nvJitLink was not found: pip install nvidia-nvjitlink")
     return ctypes.CDLL(dll)
 
 

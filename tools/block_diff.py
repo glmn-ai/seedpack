@@ -1,10 +1,10 @@
 """Fraction of differing quant blocks per tensor type between a published GGUF and the GPU re-quantisation."""
 import os, sys, collections
-sys.path.insert(0, "src")
+sys.path.insert(0, ".")
 import numpy as np, cupy as cp
-from gguf_reader import GGUF, TYPE_NAMES
-from requant import QFUN, load_imatrix
-from gpuquant import GPUQuant
+from seedpack.gguf_reader import GGUF, TYPE_NAMES
+from seedpack.requant import QFUN, load_imatrix
+from seedpack.gpuquant import GPUQuant
 d, files = sys.argv[1], sys.argv[2:]
 base_p = next(os.path.join(d, f) for f in os.listdir(d) if f.endswith("-BF16.gguf") and not f.startswith("mmproj"))
 base = open(base_p, "rb").read()

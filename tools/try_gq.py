@@ -1,5 +1,5 @@
-import sys, re; sys.path.insert(0, 'src')
-from gpuquant import GPUQuant
+import sys, re; sys.path.insert(0, '.')
+from seedpack.gpuquant import GPUQuant
 try:
     g = GPUQuant(); print('ok')
 except Exception as e:

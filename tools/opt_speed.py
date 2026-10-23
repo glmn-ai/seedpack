@@ -1,10 +1,10 @@
 """Speed of the generated quantisers with NVVM -opt=0 vs -opt=3 (the latter is not bit-exact)."""
 import os, sys, time
-sys.path.insert(0, "src")
+sys.path.insert(0, ".")
 import numpy as np, cupy as cp
-import gpuquant
-from gguf_reader import GGUF
-from requant import load_imatrix
+from seedpack import gpuquant
+from seedpack.gguf_reader import GGUF
+from seedpack.requant import load_imatrix
 d = "models/unsloth"
 base = open(os.path.join(d, "Qwen3-0.6B-BF16.gguf"), "rb").read()
 bg = GGUF.from_bytes(base)

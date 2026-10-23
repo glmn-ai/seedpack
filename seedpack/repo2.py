@@ -19,10 +19,10 @@ import cupy as cp
 import numpy as np
 import zstandard
 
-from codecs_gguf import pack, unpack, zstd_c, zstd_d
-from gguf_reader import GGUF
-from gpu_bf16 import M24BF16GPU
-from requant import QFUN, quantize, load_imatrix
+from .codecs_gguf import pack, unpack, zstd_c, zstd_d
+from .gguf_reader import GGUF
+from .gpu_bf16 import M24BF16GPU
+from .requant import QFUN, quantize, load_imatrix
 
 F32, F16, BF16 = 0, 1, 30
 

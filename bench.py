@@ -1,11 +1,11 @@
 """Run every method on a GGUF file: size, ratio, speed, byte-exact round trip."""
 import hashlib, json, sys, time
-sys.path.insert(0, "src")
-from codecs_gguf import METHODS, unpack
+sys.path.insert(0, ".")
+from seedpack.codecs_gguf import METHODS, unpack
 try:
-    from gpu_codec import M6GPU
-    from gpu2 import METHODS2
-    from gpu3 import METHODS3
+    from seedpack.gpu_codec import M6GPU
+    from seedpack.gpu2 import METHODS2
+    from seedpack.gpu3 import METHODS3
     METHODS = METHODS + [M6GPU()] + METHODS2 + METHODS3
 except ImportError as e:
     print("GPU method unavailable:", e)

@@ -1,6 +1,6 @@
 """llama.cpp quantisers on the GPU, bit-identical to the CPU build (requant.py).
 
-The CUDA source is generated from third_party/ggml/ggml-quants.c itself: every top-level
+The CUDA source is generated from ggml/ggml-quants.c itself: every top-level
 function becomes a __device__ function and each GPU thread runs the library's own
 quantize_<type>(row, dst, 1, n_per_row, imatrix) on one row. All rows of all tensors of one
 type are quantised in a single launch. Exactness comes from compiling without FMA
@@ -17,10 +17,22 @@ import cupy as cp
 import cupyx
 import numpy as np
 
-from ptxfix import link_cubin, opaque_divisions, ptx_of
-from requant import QFUN, IQ2_INIT, IQ3_INIT, lib
+from .ptxfix import link_cubin, opaque_divisions, ptx_of
+from .requant import QFUN, IQ2_INIT, IQ3_INIT, lib
 
-_DIR = os.path.join(os.path.dirname(__file__), "..", "third_party", "ggml")
+_DIR = os.path.join(os.path.dirname(__file__), "ggml")      # llama.cpp sources, IQ tables (read-only)
+
+
+def cache_dir():
+    """where compiled kernels are kept: $SEEDPACK_CACHE, else the user's cache directory"""
+    d = os.environ.get("SEEDPACK_CACHE")
+    if not d:
+        if os.name == "nt":
+            d = os.path.join(os.environ.get("LOCALAPPDATA") or os.path.expanduser("~"), "seedpack", "cache")
+        else:
+            d = os.path.join(os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache"), "seedpack")
+    os.makedirs(d, exist_ok=True)
+    return d
 
 # functions that only run on the host (table construction) or are not needed
 _SKIP = {"iq2xs_init_impl", "iq2xs_free_impl", "iq3xs_init_impl", "iq3xs_free_impl", "iq2_compare_func",
@@ -31,7 +43,7 @@ _SKIP = {"iq2xs_init_impl", "iq2xs_free_impl", "iq3xs_init_impl", "iq3xs_free_im
 _PRELUDE = r"""
 typedef signed char int8_t; typedef unsigned char uint8_t; typedef short int16_t; typedef unsigned short uint16_t;
 typedef int int32_t; typedef unsigned int uint32_t; typedef long long int64_t; typedef unsigned long long uint64_t;
-typedef unsigned long long size_t;
+typedef decltype(sizeof(0)) size_t;      // unsigned long long on Windows, unsigned long on Linux
 #define UINT32_C(x) (x ## u)
 #define UINT16_C(x) (x)
 #define INT8_MAX 127
@@ -217,7 +229,7 @@ __device__ static size_t ggml_row_size(enum ggml_type t, int64_t ne) {
 """
     src = (_PRELUDE + _fp16_funcs() + _common_header() + rowsize + _cxx_fixes(_quants_body())
            + _cxx_fixes(_variant_bodies()) + _kernels())
-    with open(os.path.join(_DIR, "gpuquant.cu"), "w", encoding="utf-8") as f:
+    with open(os.path.join(cache_dir(), "gpuquant.cu"), "w", encoding="utf-8") as f:
         f.write(src)
     return src
 
@@ -243,8 +255,17 @@ PINNED = [0]      # bytes of pinned host memory handed out since the pool was la
 def to_host(a):
     """device array -> numpy array in pinned memory (twice the bandwidth of a pageable copy).
     The blocks return to CuPy's pinned pool and are reused; the caller empties the pool now and
-    then (repo3._release), since on Windows pinned blocks count against the commit charge."""
-    host = cupyx.empty_pinned(a.shape, a.dtype)
+    then (repo3._release), since on Windows pinned blocks count against the commit charge.
+    Pinned memory is a scarce resource (WSL limits it): when it runs out, the pool's free blocks
+    go back to the OS and the copy is retried, then falls back to pageable memory."""
+    try:
+        host = cupyx.empty_pinned(a.shape, a.dtype)
+    except cp.cuda.runtime.CUDARuntimeError:
+        cp.get_default_pinned_memory_pool().free_all_blocks()
+        try:
+            host = cupyx.empty_pinned(a.shape, a.dtype)
+        except cp.cuda.runtime.CUDARuntimeError:
+            return a.get()
     a.get(out=host)
     PINNED[0] += a.nbytes
     return host
@@ -260,10 +281,10 @@ class GPUQuant:
         # thread, so it is kept small.
         cp.cuda.runtime.deviceSetLimit(0, 4096)
         # fully optimised, but with divisions by literals made opaque to ptxas (see ptxfix.py);
-        # the cubin is cached next to the generated source
+        # the cubin is cached next to the generated source, per GPU architecture
         opts = (f"--fmad={'true' if fmad else 'false'}", "--prec-div=true", "--prec-sqrt=true", "-std=c++17", "--diag-suppress=177,550,1650")
         key = hashlib.sha1((src + repr(opts) + repr(cp.cuda.Device().compute_capability)).encode()).hexdigest()[:16]
-        path = os.path.join(_DIR, f"gpuquant-{key}.cubin")
+        path = os.path.join(cache_dir(), f"gpuquant-{key}.cubin")
         if not os.path.exists(path):
             ptx, _ = opaque_divisions(ptx_of(src, opts))
             with open(path + ".tmp", "wb") as f:
@@ -274,8 +295,10 @@ class GPUQuant:
 
     def _upload_tables(self):
         """IQ grids, maps and neighbour lists, as built by the CPU library's init functions
-        (slow: ~20 s), cached on disk"""
+        (slow: ~20 s): shipped in ggml/iqtables.npz, else built once into the cache"""
         path = os.path.join(_DIR, "iqtables.npz")
+        if not os.path.exists(path):
+            path = os.path.join(cache_dir(), "iqtables.npz")
         if not os.path.exists(path):
             np.savez(path + ".tmp.npz", **self._build_tables())
             os.replace(path + ".tmp.npz", path)

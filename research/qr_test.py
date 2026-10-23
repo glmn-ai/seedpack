@@ -8,16 +8,16 @@ import sys
 import time
 from collections import defaultdict
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import cupy as cp
 import numpy as np
 import zstandard
 
-import qr
-from gguf_reader import GGUF, TYPE_NAMES
-from repo3 import M29RepoGPU, _keep_base, _read_file, _gguf_tensors
-from requant import load_imatrix
-from seed import bits_per_weight
+from seedpack import qr
+from seedpack.gguf_reader import GGUF, TYPE_NAMES
+from seedpack.repo3 import M29RepoGPU, _keep_base, _read_file, _gguf_tensors
+from seedpack.requant import load_imatrix
+from seedpack.seed import bits_per_weight
 
 args = [a for i, a in enumerate(sys.argv[1:], 1) if not a.startswith("--") and not sys.argv[i - 1].startswith("--")]
 imf = sys.argv[sys.argv.index("--imatrix") + 1] if "--imatrix" in sys.argv else None

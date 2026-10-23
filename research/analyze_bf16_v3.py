@@ -6,8 +6,8 @@ usage: analyze_bf16_v3.py [gguf] [tensor name regex]
 """
 import sys, os, re
 import numpy as np
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
-from gguf_reader import GGUF, GGML_BF16
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+from seedpack.gguf_reader import GGUF, GGML_BF16
 
 path = sys.argv[1] if len(sys.argv) > 1 else "models/unsloth/Qwen3-0.6B-BF16.gguf"
 rx = re.compile(sys.argv[2] if len(sys.argv) > 2 else r"blk\.(0|9|20)\.")

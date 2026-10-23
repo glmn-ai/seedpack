@@ -1,7 +1,7 @@
 """M27: the whole unsloth/Qwen3-0.6B-GGUF repository (all 32 files) in one archive."""
 import glob, hashlib, json, os, sys, time
-sys.path.insert(0, "src")
-from repo2 import M27RepoRequant
+sys.path.insert(0, ".")
+from seedpack.repo2 import M27RepoRequant
 
 d = "models/unsloth"
 base_path = os.path.join(d, "Qwen3-0.6B-BF16.gguf")

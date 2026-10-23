@@ -19,9 +19,9 @@ import cupy as cp
 import numpy as np
 import zstandard
 
-from codecs_gguf import pack, unpack, zstd_c, zstd_d
-from gguf_reader import GGUF
-from gpu_bf16 import M24BF16GPU
+from .codecs_gguf import pack, unpack, zstd_c, zstd_d
+from .gguf_reader import GGUF
+from .gpu_bf16 import M24BF16GPU
 
 F32, F16, BF16 = 0, 1, 30
 Q4_0, Q4_1, Q5_0, Q5_1, Q8_0 = 2, 3, 6, 7, 8

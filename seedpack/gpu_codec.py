@@ -20,8 +20,8 @@ from concurrent.futures import ThreadPoolExecutor
 import cupy as cp
 import numpy as np
 
-import rans
-from codecs_gguf import (split, join, pack, unpack, zstd_c, zstd_d, xz_c, xz_d,
+from . import rans
+from .codecs_gguf import (split, join, pack, unpack, zstd_c, zstd_d, xz_c, xz_d,
                          tables_c, tables_d, N_COL, N_SB)
 
 VERBOSE = False

@@ -14,16 +14,16 @@ import os
 import sys
 import time
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import cupy as cp
 import numpy as np
 
-import qr
+from seedpack import qr
 
-from gguf_reader import GGUF
-from repo3 import M29RepoGPU, _keep_base, _read_file, _gguf_tensors
-from requant import load_imatrix
-from seed import bits_per_weight
+from seedpack.gguf_reader import GGUF
+from seedpack.repo3 import M29RepoGPU, _keep_base, _read_file, _gguf_tensors
+from seedpack.requant import load_imatrix
+from seedpack.seed import bits_per_weight
 
 SHARE = {"attn_q": ["attn_q", "attn_k", "attn_v"], "ffn_gate": ["ffn_gate", "ffn_up"],
          "attn_output": ["attn_output"], "ffn_down": ["ffn_down"]}
@@ -57,7 +57,7 @@ for p in paths:
             x = (src.f32() if hasattr(src, "f32") else gq.dequantize(1, src, cols) if False else None)
             if x is None:
                 xx = cp.empty(rows * cols, cp.float32)
-                from gpuquant import _to_f32_into
+                from seedpack.gpuquant import _to_f32_into
                 _to_f32_into(src, xx); x = xx
             x = x[: nr * cols]
             fb = cp.asarray(np.frombuffer(g.data, np.uint8, t.nbytes, t.offset)[: t.nbytes // rows * nr])

@@ -1,11 +1,11 @@
 """Which tensors of a Qwen3.5 quant differ from the GPU re-quantisation, and by how much; tries imatrix normalisations."""
 import os, sys
-sys.path.insert(0, "src")
+sys.path.insert(0, ".")
 import numpy as np, cupy as cp
-from gguf_reader import GGUF, TYPE_NAMES
-from requant import QFUN, load_imatrix
-from gpuquant import GPUQuant
-from gguf_reader import GGUF as G
+from seedpack.gguf_reader import GGUF, TYPE_NAMES
+from seedpack.requant import QFUN, load_imatrix
+from seedpack.gpuquant import GPUQuant
+from seedpack.gguf_reader import GGUF as G
 d = "models/qwen35-2b"
 base = open(os.path.join(d, "Qwen3.5-2B-BF16.gguf"), "rb").read()
 bg = GGUF.from_bytes(base, light=True); by = {t.name: t for t in bg.tensors}

@@ -18,11 +18,11 @@ import cupy as cp
 import numpy as np
 
 
-from codecs_gguf import pack, unpack, zstd_c, zstd_d
-from gguf_reader import GGUF, GGML_BF16
-from gpu2 import normalize_gpu, cum_of, store_tables, load_tables, Timer, GPU2
+from .codecs_gguf import pack, unpack, zstd_c, zstd_d
+from .gguf_reader import GGUF, GGML_BF16
+from .gpu2 import normalize_gpu, cum_of, store_tables, load_tables, Timer, GPU2
 PB = 15                   # probability resolution (M24: 12); +0.25 MB gain, see pb_study.py
-from gpu_bf16 import M24BF16GPU
+from .gpu_bf16 import M24BF16GPU
 
 SEG = 16384
 K = 8                     # side info resolution: 1/K octave

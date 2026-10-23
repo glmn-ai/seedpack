@@ -1,7 +1,7 @@
 import glob, os, sys, tracemalloc, gc
-sys.path.insert(0, "src")
+sys.path.insert(0, ".")
 import numpy as np, cupy as cp, psutil
-from repo3 import M28RepoGPU
+from seedpack.repo3 import M28RepoGPU
 d = "models/qwen35-08b"
 P = lambda: psutil.Process().memory_info().private / 1e9
 m = M28RepoGPU(cache_bytes=0)

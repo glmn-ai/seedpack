@@ -8,7 +8,6 @@ import json
 import os
 import re
 import shutil
-import subprocess
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -91,12 +90,13 @@ runner = min(others, key=lambda r: r["archive"])
 runner_name = next(t for t, r in hf if r is runner)
 bf16_alone = res["bf16-0.6b | SeedPack"]["archive"]
 quant_cost = sp["archive"] - bf16_alone
-commit = subprocess.run(["git", "-C", ROOT, "rev-parse", "--short", "HEAD"], capture_output=True, text=True).stdout.strip()
+sys.path.insert(0, ROOT)
+from seedpack import __version__  # noqa: E402
 
 ext = ""
 if opt:
     ext = (f"\nOn the benchmark machine below, extracting one quant takes about {opt['--extract-one']:.0f} s and the whole "
-           f"repository about {opt['--extract-all']:.0f} s, file writes included.\n") if len(opt) == 2 else ""
+           f"repository about {opt['--extract-all']:.0f} s, file writes included (plus 2–4 s to start).\n") if len(opt) == 2 else ""
 
 card_src = open(os.path.join(ROOT, "models", "unsloth", "README.md"), encoding="utf-8").read()
 m = re.match(r"---\n(.*?)\n---\n", card_src, re.S)
@@ -150,43 +150,37 @@ When a repository has no BF16 model, the most precise quant (for example Q8_0) b
 
 ### 1. Install SeedPack
 
+```bash
+pip install seedpack
+```
+
 Requirements:
-- An NVIDIA GPU with a CUDA 13 driver.
-- Windows 10/11 (Linux support is planned).
-- Python 3.11.
-- MinGW-w64 gcc, to build the CPU quantizer library once.
+- An NVIDIA GPU, Turing (RTX 20xx) or newer, with a CUDA 13 driver (R580 or newer).
+- Python 3.11+.
+- Windows 10/11 or Linux. Tested on an RTX 5070 under Windows 10 and Ubuntu (WSL2). No CUDA Toolkit is needed.
+
+The first run compiles the GPU quantizers for your card (about 15 s) and caches them.
+
+### 2. Extract quants or the whole repository
+
+SeedPack reads the archive straight from this repository. `list` fetches only the index; `x` downloads the archive once into the Hugging Face cache.
 
 ```bash
-git clone {GITHUB}
-cd seedpack
-git checkout {commit}            # the version this archive was made with
-python -m venv .venv
-.venv\\Scripts\\pip install -r requirements.txt
-sh third_party/ggml/build.sh
+seedpack list hf://{REPO}                                          # what is inside
+seedpack x hf://{REPO} Qwen3-0.6B-Q4_K_M.gguf -o models            # one quant
+seedpack x hf://{REPO} "*Q4_K*" "*Q8_0*" -o models                 # several, by name or mask
+seedpack x hf://{REPO} -o models                                   # the whole repository
+seedpack test hf://{REPO}                                          # decode and verify everything, write nothing
 ```
 
-The first run compiles the GPU quantizers (about a minute) and builds the IQ grid tables (about 25 s); both are cached afterwards.
-
-### 2. Download the archive
+Only the files you ask for are written; the seed is decoded in memory. A downloaded copy works the same way:
 
 ```bash
-pip install -U huggingface_hub
 hf download {REPO} {ARCHIVE} --local-dir .
+seedpack x {ARCHIVE} Qwen3-0.6B-Q4_K_M.gguf -o models
 ```
-
-### 3. Extract quants or the whole repository
-
-```bash
-varc list {ARCHIVE}                                       # what is inside
-varc x {ARCHIVE} Qwen3-0.6B-Q4_K_M.gguf -o models         # one quant
-varc x {ARCHIVE} "*Q4_K*" "*Q8_0*" -o models              # several, by name or mask
-varc x {ARCHIVE} -o models                                # the whole repository
-varc test {ARCHIVE}                                       # decode and verify everything, write nothing
-```
-
-`varc` is `varc.cmd` in the SeedPack folder (or `python varc.py`). Only the files you ask for are written; the seed is decoded in memory.
 {ext}
-### 4. Run the model
+### 3. Run the model
 
 The extracted files are the original Unsloth GGUFs, so any GGUF runtime works.
 
@@ -226,7 +220,8 @@ Notes:
 - ² Size estimates from a model of the format. HF Xet is how the Hub stores files: content-defined chunks, deduplication and LZ4. DFloat11 applies to BF16 weights only.
 - ZipLLM is not included: it accepts safetensors only.
 - Single-stream compressors (zstd, xz) read the files concatenated, like a tar. brotli, bzip2, gzip and lz4 compress 64 MB blocks on 12 workers, like pigz and pbzip2. 7-Zip uses its own multi-threaded LZMA2.
-- SeedPack times include process start and CUDA initialization (2–4 s).
+- brotli runs at quality 7. Qualities 9–11 compress BF16 data at about 1 MB/s per core (hours for this set) and gain less than 0.5%.
+- SeedPack times include process start and CUDA initialization (2–4 s). The archive was made with SeedPack {__version__}.
 - To reproduce, run [`bench_competitors/hf_bench.py`]({GITHUB}/blob/main/bench_competitors/hf_bench.py).
 
 ## Contents of the archive
@@ -250,4 +245,4 @@ os.makedirs(os.path.join(out_dir, "assets"), exist_ok=True)
 open(os.path.join(out_dir, "README.md"), "w", encoding="utf-8", newline="\n").write(header + orig_body)
 shutil.copyfile(os.path.join(ROOT, "assets", "banner.png"), os.path.join(out_dir, "assets", "seedpack-banner.png"))
 print(f"{out_dir}/README.md: archive {size(sp['archive'])} ({100 * sp['archive'] / n_in:.2f}%), quants {quant_cost / 1e6:.2f} MB, "
-      f"runner-up {runner_name} {runner['archive'] / sp['archive']:.1f}x, commit {commit}")
+      f"runner-up {runner_name} {runner['archive'] / sp['archive']:.1f}x, seedpack {__version__}")

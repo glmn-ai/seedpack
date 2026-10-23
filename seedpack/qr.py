@@ -25,8 +25,8 @@ import struct
 import cupy as cp
 import numpy as np
 
-from codecs_gguf import pack, unpack, zstd_c, zstd_d
-from gpu2 import cum_of, store_tables, load_tables
+from .codecs_gguf import pack, unpack, zstd_c, zstd_d
+from .gpu2 import cum_of, store_tables, load_tables
 
 QR_TYPES = {2, 3, 6, 7, 8, 10, 11, 12, 13, 14, 20, 23}
 SEED_TYPES = QR_TYPES | {0, 1, 30}
@@ -667,7 +667,7 @@ def weight_equal(T, F, P, nw):
 def self_side(T, blocks, cols):
     """no-seed coding of one tensor (device uint8 blocks, `cols` weights per row) -> side info
     (column RMS as fp16 bytes, template blocks) and the device arrays the coder uses"""
-    from gpuquant import GPUQuant
+    from .gpuquant import GPUQuant
     gq = _gq()
     x = gq.dequantize(T, blocks, cols).reshape(-1, cols)
     rms = cp.sqrt((x * x).mean(0)).astype(cp.float16)
@@ -690,7 +690,7 @@ _GQ = None
 def _gq():
     global _GQ
     if _GQ is None:
-        from gpuquant import GPUQuant
+        from .gpuquant import GPUQuant
         _GQ = GPUQuant()
     return _GQ
 

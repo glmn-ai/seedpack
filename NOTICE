@@ -1,0 +1,6 @@
+SeedPack
+Copyright 2026 NeuroSquad
+
+This product includes the quantisation sources of ggml / llama.cpp
+(seedpack/ggml/), Copyright (c) 2023-2026 The ggml authors, MIT License
+(see seedpack/ggml/LICENSE).

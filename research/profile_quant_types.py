@@ -1,10 +1,10 @@
 """GPU quantisation time per ggml type for the unique (tensor, type) pairs of a repository."""
 import glob, os, sys, time, collections
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import numpy as np, cupy as cp
-from gguf_reader import GGUF, TYPE_NAMES
-from gpuquant import GPUQuant
-from requant import QFUN, load_imatrix
+from seedpack.gguf_reader import GGUF, TYPE_NAMES
+from seedpack.gpuquant import GPUQuant
+from seedpack.requant import QFUN, load_imatrix
 d = sys.argv[1] if len(sys.argv) > 1 else "models/unsloth"
 base = open(glob.glob(os.path.join(d, "*BF16*.gguf"))[0], "rb").read()
 bg = GGUF.from_bytes(base); by = {t.name: t for t in bg.tensors}

@@ -1,0 +1,60 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "seedpack"
+dynamic = ["version"]
+description = "Lossless GPU archiver for GGUF model repositories: the BF16 model and all its quants in one archive about the size of a single compressed BF16 file"
+readme = "README_PYPI.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE", "seedpack/ggml/LICENSE"]
+authors = [{ name = "NeuroSquad" }]
+keywords = ["gguf", "llama.cpp", "lossless", "compression", "archiver", "quantization", "cuda", "llm", "huggingface"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Environment :: GPU :: NVIDIA CUDA :: 13",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: System :: Archiving :: Compression",
+]
+dependencies = [
+    "numpy>=2.0",
+    "numba>=0.60",
+    "zstandard>=0.23",
+    "blake3>=1.0",
+    "cupy-cuda13x>=14.0",
+    "nvidia-cuda-nvrtc>=13.0",
+    "nvidia-cuda-runtime>=13.0",
+    "nvidia-nvjitlink>=13.0",
+    "huggingface_hub>=0.30",
+]
+
+[project.urls]
+Homepage = "https://github.com/glmn-ai/seedpack"
+Source = "https://github.com/glmn-ai/seedpack"
+Issues = "https://github.com/glmn-ai/seedpack/issues"
+"Example archive" = "https://huggingface.co/neurosquad/Qwen3-0.6B-SEEDPACK"
+
+[project.scripts]
+seedpack = "seedpack.cli:main"
+
+[tool.setuptools]
+packages = ["seedpack", "seedpack.ggml", "seedpack.ggml.variants"]
+
+[tool.setuptools.dynamic]
+version = { attr = "seedpack.__version__" }
+
+[tool.setuptools.package-data]
+"seedpack.ggml" = ["LICENSE", "*.c", "*.h", "ggml-cpu/*.h", "build.sh", "iqtables.npz"]
+"seedpack.ggml.variants" = ["*.c"]

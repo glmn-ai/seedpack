@@ -1,9 +1,9 @@
 """M22/M23 (CPU) vs their GPU ports M24/M25. GPU methods get one untimed warm-up run."""
 import hashlib, json, sys, time
-sys.path.insert(0, "src")
-from bf16codec import M22BF16
-from bundle import M23Bundle
-from gpu_bf16 import M24BF16GPU, M25BundleGPU
+sys.path.insert(0, ".")
+from seedpack.bf16codec import M22BF16
+from seedpack.bundle import M23Bundle
+from seedpack.gpu_bf16 import M24BF16GPU, M25BundleGPU
 
 BF16, Q8 = "models/ref/Qwen3-0.6B-BF16.gguf", "models/Qwen3-0.6B-Q8_0.gguf"
 which = sys.argv[1:] or ["M22", "M24", "M23", "M25"]

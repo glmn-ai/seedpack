@@ -1,8 +1,8 @@
 """Pack a directory with QR statistics on: entropy of the flag / scale / code streams per type."""
 import os, sys, tempfile
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
-import qr
-from gguf_reader import TYPE_NAMES
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+from seedpack import qr
+from seedpack.gguf_reader import TYPE_NAMES
 qr.STATS = {}
 import runpy
 out = os.path.join(tempfile.gettempdir(), "qr_breakdown.varc")

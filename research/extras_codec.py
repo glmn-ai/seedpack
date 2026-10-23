@@ -45,8 +45,8 @@ if __name__ == "__main__":
     d = sys.argv[1] if len(sys.argv) > 1 else "models/unsloth"
     files = {os.path.basename(p): open(p, "rb").read() for p in glob.glob(os.path.join(d, "*")) + glob.glob(os.path.join(d, ".*"))
              if os.path.isfile(p) and not p.endswith(".gguf") and os.path.basename(p) != ".files"}
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
-    from codecs_gguf import pack
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+    from seedpack.codecs_gguf import pack
     base = len(lzma.compress(pack(files), preset=9))
     im = {k: v for k, v in files.items() if k.startswith("imatrix")}
     rest = {k: v for k, v in files.items() if k not in im}

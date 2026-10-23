@@ -4,7 +4,7 @@ import glob, hashlib, json, os, sys, time
 sys.path.insert(0, os.path.dirname(__file__))
 import cupy as cp
 from repo_sparse import R3RepoSparse, R2Base
-from gpuquant import GPUQuant
+from seedpack.gpuquant import GPUQuant
 d = sys.argv[1] if len(sys.argv) > 1 else "models/unsloth"
 mode = sys.argv[2] if len(sys.argv) > 2 else "sparse"
 cache = float(sys.argv[3]) if len(sys.argv) > 3 else 2

@@ -27,8 +27,8 @@ from concurrent.futures import ThreadPoolExecutor
 import cupy as cp
 import numpy as np
 
-from codecs_gguf import pack, unpack, zstd_c, zstd_d, group_of
-from gguf_reader import GGUF, GGML_Q8_0
+from .codecs_gguf import pack, unpack, zstd_c, zstd_d, group_of
+from .gguf_reader import GGUF, GGML_Q8_0
 
 PB = 12
 SEGA = 4096            # blocks per thread, phase A
