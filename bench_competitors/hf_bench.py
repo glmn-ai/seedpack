@@ -150,7 +150,7 @@ def t_xz(ds, paths, ref):
 
 def _brotli_c(b):
     import brotli
-    return brotli.compress(b, quality=9, lgwin=24)
+    return brotli.compress(b, quality=7, lgwin=24)
 
 
 def _brotli_d(b):
@@ -231,7 +231,7 @@ TOOLS = {   # name: (function, datasets it applies to; None = all)
     "zstd 1.5.7 -3 --long=30": (t_zstd(3), None),
     "7-Zip 23.01 -mx9 (LZMA2)": (t_7z, None),
     "xz 5.4.1 -6": (t_xz, None),
-    "brotli 1.2 -q9": (t_chunked("brotli"), None),
+    "brotli 1.2 -q7": (t_chunked("brotli"), None),
     "bzip2 -9": (t_chunked("bzip2"), None),
     "gzip -9": (t_chunked("gzip"), None),
     "lz4 1.9.4 -9 (HC)": (t_chunked("lz4"), None),
