@@ -1,0 +1,263 @@
+{
+ "raw_total": 10948170368,
+ "archive": 1596064592,
+ "base": 1198182848,
+ "base_archived": 782650261,
+ "files": [
+  {
+   "file": "IQ4_NL",
+   "size": 381566656,
+   "archived": 36757451,
+   "pct": 9.633297465069903,
+   "lossless": true,
+   "types": "IQ4_NL, Q6_K, F32"
+  },
+  {
+   "file": "IQ4_XS",
+   "size": 367804096,
+   "archived": 16629358,
+   "pct": 4.521254162433253,
+   "lossless": true,
+   "types": "IQ4_XS, Q6_K, F32"
+  },
+  {
+   "file": "Q2_K",
+   "size": 296238784,
+   "archived": 29767527,
+   "pct": 10.048490814761108,
+   "lossless": true,
+   "types": "Q6_K, Q2_K, Q3_K"
+  },
+  {
+   "file": "Q2_K_L",
+   "size": 296238784,
+   "archived": 512807,
+   "pct": 0.17310596305985376,
+   "lossless": true,
+   "types": "Q6_K, Q2_K, Q3_K"
+  },
+  {
+   "file": "Q3_K_M",
+   "size": 347127488,
+   "archived": 26204421,
+   "pct": 7.54893285777472,
+   "lossless": true,
+   "types": "Q6_K, Q3_K, Q4_K"
+  },
+  {
+   "file": "Q3_K_S",
+   "size": 323075776,
+   "archived": 513641,
+   "pct": 0.15898468351895254,
+   "lossless": true,
+   "types": "Q3_K, Q6_K, F32"
+  },
+  {
+   "file": "Q4_0",
+   "size": 382156480,
+   "archived": 30952308,
+   "pct": 8.099380651611613,
+   "lossless": true,
+   "types": "Q4_0, Q6_K, Q4_1"
+  },
+  {
+   "file": "Q4_1",
+   "size": 409091776,
+   "archived": 53472691,
+   "pct": 13.071074545385141,
+   "lossless": true,
+   "types": "Q4_1, Q6_K, F32"
+  },
+  {
+   "file": "Q4_K_M",
+   "size": 396705472,
+   "archived": 20815362,
+   "pct": 5.247056940016194,
+   "lossless": true,
+   "types": "Q4_K, Q6_K, F32"
+  },
+  {
+   "file": "Q4_K_S",
+   "size": 383270592,
+   "archived": 1036237,
+   "pct": 0.27036694743331624,
+   "lossless": true,
+   "types": "Q4_K, Q6_K, Q5_K"
+  },
+  {
+   "file": "Q5_K_M",
+   "size": 444415680,
+   "archived": 24251407,
+   "pct": 5.456919746846016,
+   "lossless": true,
+   "types": "Q5_K, Q6_K, F32"
+  },
+  {
+   "file": "Q5_K_S",
+   "size": 436616896,
+   "archived": 3388074,
+   "pct": 0.7759832546654356,
+   "lossless": true,
+   "types": "Q5_K, Q6_K, F32"
+  },
+  {
+   "file": "Q6_K",
+   "size": 495107776,
+   "archived": 26869991,
+   "pct": 5.427099371592177,
+   "lossless": true,
+   "types": "Q6_K, F32"
+  },
+  {
+   "file": "Q8_0",
+   "size": 639447744,
+   "archived": 34316394,
+   "pct": 5.366567373486582,
+   "lossless": true,
+   "types": "Q8_0, F32"
+  },
+  {
+   "file": "UD-IQ1_M",
+   "size": 220754624,
+   "archived": 112753743,
+   "pct": 51.07650338504348,
+   "lossless": true,
+   "types": "Q5_K, IQ1_M, IQ2_XXS"
+  },
+  {
+   "file": "UD-IQ1_S",
+   "size": 214643392,
+   "archived": 41199082,
+   "pct": 19.194200024569124,
+   "lossless": true,
+   "types": "Q5_K, IQ1_S, IQ2_XXS"
+  },
+  {
+   "file": "UD-IQ2_M",
+   "size": 268702400,
+   "archived": 143949741,
+   "pct": 53.57218283126611,
+   "lossless": true,
+   "types": "Q5_K, IQ2_S, IQ3_S"
+  },
+  {
+   "file": "UD-IQ2_XXS",
+   "size": 234074816,
+   "archived": 80318093,
+   "pct": 34.3130005920842,
+   "lossless": true,
+   "types": "Q5_K, IQ2_XXS, IQ3_XXS"
+  },
+  {
+   "file": "UD-IQ3_XXS",
+   "size": 282088128,
+   "archived": 86634663,
+   "pct": 30.711913902310698,
+   "lossless": true,
+   "types": "IQ3_XXS, Q5_K, IQ3_S"
+  },
+  {
+   "file": "UD-Q2_K_XL",
+   "size": 301727424,
+   "archived": 20921492,
+   "pct": 6.933904688756432,
+   "lossless": true,
+   "types": "Q6_K, Q3_K, Q2_K"
+  },
+  {
+   "file": "UD-Q3_K_XL",
+   "size": 356622016,
+   "archived": 20057147,
+   "pct": 5.624203246049733,
+   "lossless": true,
+   "types": "Q6_K, Q4_K, Q3_K"
+  },
+  {
+   "file": "UD-Q4_K_XL",
+   "size": 405372608,
+   "archived": 516292,
+   "pct": 0.12736233031315228,
+   "lossless": true,
+   "types": "Q6_K, Q4_K, Q5_K"
+  },
+  {
+   "file": "UD-Q5_K_XL",
+   "size": 446381760,
+   "archived": 517552,
+   "pct": 0.11594380558918894,
+   "lossless": true,
+   "types": "Q6_K, Q5_K, Q4_K"
+  },
+  {
+   "file": "UD-Q6_K_XL",
+   "size": 576467648,
+   "archived": 521575,
+   "pct": 0.09047775739185974,
+   "lossless": true,
+   "types": "Q8_0, Q6_K, F32"
+  },
+  {
+   "file": "UD-Q8_K_XL",
+   "size": 844288704,
+   "archived": 529887,
+   "pct": 0.06276135135878828,
+   "lossless": true,
+   "types": "F16, Q8_0, F32"
+  }
+ ],
+ "lossless": true,
+ "compress_s": 57.05944919999456,
+ "decompress_s": 51.53111879999051,
+ "stats": {
+  "Q6_K": [
+   595984384,
+   0,
+   488893440
+  ],
+  "IQ4_NL": [
+   440401920,
+   36194,
+   247726080
+  ],
+  "IQ4_XS": [
+   440401920,
+   508366,
+   233963520
+  ],
+  "Q2_K": [
+   283115520,
+   990,
+   92897280
+  ],
+  "Q3_K": [
+   440401920,
+   0,
+   189235200
+  ],
+  "Q4_K": [
+   437256192,
+   0,
+   245956608
+  ],
+  "Q5_K": [
+   595984384,
+   0,
+   409739264
+  ],
+  "Q4_0": [
+   430964736,
+   1364954,
+   242417664
+  ],
+  "Q4_1": [
+   440401920,
+   1146338,
+   275251200
+  ],
+  "Q8_0": [
+   595984384,
+   0,
+   633233408
+  ]
+ }
+}

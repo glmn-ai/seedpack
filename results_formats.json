@@ -1,0 +1,43 @@
+{
+ "note": "lossless, no external reference; Qwen3-0.6B",
+ "results": [
+  {
+   "file": "Qwen3-0.6B-BF16.gguf",
+   "method": "zstd -19",
+   "saved_pct": 24.55
+  },
+  {
+   "file": "Qwen3-0.6B-BF16.gguf",
+   "method": "M22 BF16 context rANS",
+   "size": 782452527,
+   "saved_pct": 34.7,
+   "lossless": true
+  },
+  {
+   "file": "Qwen3-0.6B-Q4_K_M.gguf",
+   "method": "zstd -19",
+   "saved_pct": 3.03
+  },
+  {
+   "file": "Qwen3-0.6B-Q4_K_M.gguf",
+   "method": "context entropy estimate (quantised tensors)",
+   "saved_pct": 4.87,
+   "note": "ideal code length, not a full codec"
+  },
+  {
+   "file": "Qwen3-0.6B-Q8_0.gguf",
+   "method": "M21",
+   "size": 581237262,
+   "saved_pct": 9.103,
+   "lossless": true
+  },
+  {
+   "file": "BF16 + Q8_0 bundle",
+   "method": "M23 repo bundle",
+   "raw": 1837629536,
+   "size": 864085233,
+   "saved_pct": 52.98,
+   "lossless": true
+  }
+ ]
+}

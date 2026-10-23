@@ -1,0 +1,532 @@
+{
+ "file": "models/Qwen3-0.6B-Q8_0.gguf",
+ "size": 639446688,
+ "results": [
+  {
+   "method": "M1 generic xz -9e (whole file)",
+   "size": 613647748,
+   "saved_pct": 4.034572464624286,
+   "c_MBps": 6.022623842667868,
+   "d_MBps": 45.64518693066226,
+   "lossless": true
+  },
+  {
+   "method": "M1b generic zstd -19 --long (whole file)",
+   "size": 608686378,
+   "saved_pct": 4.810457318374606,
+   "c_MBps": 12.968340666435955,
+   "d_MBps": 696.7341529218957,
+   "lossless": true
+  },
+  {
+   "method": "M2 stream split (scale lo/hi | qs) + xz/zstd",
+   "size": 597191403,
+   "saved_pct": 6.608101315242088,
+   "c_MBps": 3.2681360407386837,
+   "d_MBps": 293.63366337883707,
+   "lossless": true,
+   "chunks": {
+    "layout": 998,
+    "rest": 1382152,
+    "d_lo": 17918656,
+    "d_hi": 6390426,
+    "qs": 571499097
+   }
+  },
+  {
+   "method": "M3 split + static order-0 rANS per tensor",
+   "size": 596397337,
+   "saved_pct": 6.7322814877102015,
+   "c_MBps": 39.553979799671914,
+   "d_MBps": 119.35057181262093,
+   "lossless": true,
+   "chunks": {
+    "layout": 998,
+    "rest": 1382152,
+    "tables": 637223,
+    "streams": 594376897
+   }
+  },
+  {
+   "method": "M4 context rANS (scale-bucket x channel-class, order-1 scales)",
+   "size": 593569602,
+   "saved_pct": 7.174497399226498,
+   "c_MBps": 32.17985896115432,
+   "d_MBps": 39.842169190837616,
+   "lossless": true,
+   "chunks": {
+    "layout": 998,
+    "rest": 1382152,
+    "tables": 469013,
+    "tkeys": 126,
+    "colmap": 143666,
+    "streams": 591573549
+   }
+  },
+  {
+   "method": "M5 max-element extraction + context rANS",
+   "size": 590878018,
+   "saved_pct": 7.595421308992689,
+   "c_MBps": 22.881139665744524,
+   "d_MBps": 39.86358448575675,
+   "lossless": true,
+   "chunks": {
+    "layout": 998,
+    "rest": 1382152,
+    "tables": 469368,
+    "tkeys": 171,
+    "colmap": 143666,
+    "streams": 588881565
+   }
+  },
+  {
+   "method": "M6 GPU segmented context rANS (CUDA)",
+   "size": 590894692,
+   "saved_pct": 7.592813742120752,
+   "c_MBps": 162.48220753769104,
+   "d_MBps": 606.7046325095909,
+   "lossless": true,
+   "chunks": {
+    "layout": 998,
+    "rest": 1382152,
+    "meta": 469,
+    "colmap": 143666,
+    "used": 2627,
+    "tables": 276487,
+    "seglen": 41869,
+    "stream": 589046298
+   },
+   "timing": {
+    "compress": {
+     "cpu split": 0.452,
+     "gpu contexts": 0.363,
+     "gpu histogram": 0.017,
+     "cpu normalise": 0.071,
+     "gpu encode": 0.208,
+     "cpu pack (wait xz header, zstd tables)": 2.43
+    },
+    "decompress": {
+     "cpu unpack": 0.096,
+     "gpu upload + luts": 0.101,
+     "gpu decode": 0.048,
+     "gpu->cpu copy": 0.122,
+     "cpu join": 0.558
+    }
+   }
+  },
+  {
+   "method": "M7 GPU2 engine + rank-1 variance context",
+   "size": 589977205,
+   "saved_pct": 7.736295132706983,
+   "c_MBps": 362.01959070933515,
+   "d_MBps": 1250.2778222835918,
+   "lossless": true,
+   "chunks": {
+    "layout": 998,
+    "side": 365,
+    "cfi": 91307,
+    "tables": 74804,
+    "lens": 28950,
+    "A": 36633691,
+    "B": 551745596,
+    "rest": 1401381
+   },
+   "timing": {
+    "compress": {
+     "upload + gather": 0.448,
+     "statistics": 0.384,
+     "histograms": 0.022,
+     "tables": 0.02,
+     "encode + download": 0.319,
+     "extra phase": 0.0,
+     "pack (wait header)": 0.359
+    },
+    "decompress": {
+     "unpack": 0.099,
+     "upload + luts": 0.159,
+     "decode": 0.067,
+     "assemble + download": 0.115,
+     "header": 0.001
+    }
+   }
+  },
+  {
+   "method": "M8 = M7 + sign|column-bias split",
+   "size": 589019731,
+   "saved_pct": 7.886029898398661,
+   "c_MBps": 323.78896787327784,
+   "d_MBps": 1091.847457906787,
+   "lossless": true,
+   "chunks": {
+    "layout": 998,
+    "side": 365,
+    "cfi": 91307,
+    "tables": 76112,
+    "lens": 29287,
+    "A": 36445787,
+    "B": 550918172,
+    "scls": 56195,
+    "rest": 1401381
+   },
+   "timing": {
+    "compress": {
+     "upload + gather": 0.382,
+     "statistics": 0.363,
+     "histograms": 0.035,
+     "tables": 0.022,
+     "encode + download": 0.314,
+     "extra phase": 0.0,
+     "pack (wait header)": 0.592
+    },
+    "decompress": {
+     "unpack": 0.1,
+     "upload + luts": 0.169,
+     "decode": 0.09,
+     "assemble + download": 0.116,
+     "header": 0.001
+    }
+   }
+  },
+  {
+   "method": "M9 = M8 + max-position rank + scale col ctx",
+   "size": 588772806,
+   "saved_pct": 7.924645314606749,
+   "c_MBps": 343.9944010058195,
+   "d_MBps": 1041.2686572076059,
+   "lossless": true,
+   "chunks": {
+    "layout": 998,
+    "side": 365,
+    "cfi": 91307,
+    "tables": 91061,
+    "lens": 29625,
+    "A": 36183575,
+    "B": 550918172,
+    "scls": 56195,
+    "rest": 1401381
+   },
+   "timing": {
+    "compress": {
+     "upload + gather": 0.395,
+     "statistics": 0.323,
+     "histograms": 0.032,
+     "tables": 0.017,
+     "encode + download": 0.301,
+     "extra phase": 0.0,
+     "pack (wait header)": 0.524
+    },
+    "decompress": {
+     "unpack": 0.102,
+     "upload + luts": 0.184,
+     "decode": 0.095,
+     "assemble + download": 0.122,
+     "header": 0.001
+    }
+   }
+  },
+  {
+   "method": "M10 = M9 + duplicate-row references",
+   "size": 588340703,
+   "saved_pct": 7.992219829903946,
+   "c_MBps": 287.1369308205097,
+   "d_MBps": 1004.8664130939218,
+   "lossless": true,
+   "chunks": {
+    "layout": 998,
+    "side": 1086,
+    "cfi": 91307,
+    "tables": 90868,
+    "lens": 29512,
+    "A": 36160721,
+    "B": 550508508,
+    "scls": 56195,
+    "rest": 1401381
+   },
+   "timing": {
+    "compress": {
+     "upload + gather": 0.364,
+     "statistics": 0.644,
+     "histograms": 0.041,
+     "tables": 0.02,
+     "encode + download": 0.337,
+     "extra phase": 0.0,
+     "pack (wait header)": 0.541
+    },
+    "decompress": {
+     "unpack": 0.101,
+     "upload + luts": 0.211,
+     "decode": 0.1,
+     "assemble + download": 0.111,
+     "header": 0.001
+    }
+   }
+  },
+  {
+   "method": "M11 = M10 + tokenizer-aware header (merges from vocab)",
+   "size": 587644471,
+   "saved_pct": 8.101100212438661,
+   "c_MBps": 280.40143518856735,
+   "d_MBps": 787.36114465812,
+   "lossless": true,
+   "chunks": {
+    "layout": 998,
+    "side": 1086,
+    "cfi": 91307,
+    "tables": 90868,
+    "lens": 29512,
+    "A": 36160721,
+    "B": 550508508,
+    "scls": 56195,
+    "rest": 705149
+   },
+   "timing": {
+    "compress": {
+     "upload + gather": 0.477,
+     "statistics": 0.555,
+     "histograms": 0.033,
+     "tables": 0.018,
+     "encode + download": 0.319,
+     "extra phase": 0.0,
+     "pack (wait header)": 0.556
+    },
+    "decompress": {
+     "unpack": 0.118,
+     "upload + luts": 0.345,
+     "decode": 0.093,
+     "assemble + download": 0.133,
+     "header": 0.001
+    }
+   }
+  },
+  {
+   "method": "M17 = M11 + token_embd row prediction (2 earlier similar rows)",
+   "size": 582667301,
+   "saved_pct": 8.879455952393645,
+   "c_MBps": 95.84896000340305,
+   "d_MBps": 361.11247125750407,
+   "lossless": true,
+   "chunks": {
+    "layout": 998,
+    "side": 1086,
+    "cfi": 91307,
+    "tables": 85733,
+    "lens": 23219,
+    "A": 36160721,
+    "B": 407334892,
+    "scls": 56195,
+    "C": 136998701,
+    "Clens": 47518,
+    "Ctables": 4317,
+    "Cside": 57,
+    "Cpar": 631769,
+    "Ccoef": 465548,
+    "Cfbin": 55966,
+    "Cmu": 3850,
+    "Ccadj": 18,
+    "rest": 705149
+   },
+   "timing": {
+    "compress": {
+     "upload + gather": 0.474,
+     "statistics": 4.244,
+     "histograms": 0.029,
+     "tables": 0.016,
+     "encode + download": 0.278,
+     "extra phase": 0.578,
+     "pack (wait header)": 0.531
+    },
+    "decompress": {
+     "unpack": 0.124,
+     "upload + luts": 0.301,
+     "decode": 1.054,
+     "assemble + download": 0.126,
+     "header": 0.001
+    }
+   }
+  },
+  {
+   "method": "M18 = M17 + int8 coefs, 0..3 parents chosen per row",
+   "size": 582274518,
+   "saved_pct": 8.940881401515677,
+   "c_MBps": 85.60974430595743,
+   "d_MBps": 398.70114235234473,
+   "lossless": true,
+   "chunks": {
+    "layout": 998,
+    "side": 1086,
+    "cfi": 91307,
+    "tables": 85733,
+    "lens": 23219,
+    "A": 36160721,
+    "B": 407334892,
+    "scls": 56195,
+    "C": 136692103,
+    "Clens": 48042,
+    "Ctables": 4365,
+    "Cside": 57,
+    "Cpar": 769563,
+    "Ccoef": 239522,
+    "Cfbin": 57441,
+    "Cmu": 3850,
+    "Ccadj": 18,
+    "rest": 705149
+   },
+   "timing": {
+    "compress": {
+     "upload + gather": 0.475,
+     "statistics": 4.84,
+     "histograms": 0.029,
+     "tables": 0.016,
+     "encode + download": 0.241,
+     "extra phase": 0.834,
+     "pack (wait header)": 0.512
+    },
+    "decompress": {
+     "unpack": 0.126,
+     "upload + luts": 0.287,
+     "decode": 0.876,
+     "assemble + download": 0.151,
+     "header": 0.001
+    }
+   }
+  },
+  {
+   "method": "M19 = M18 + max position/value of embedding blocks from the prediction",
+   "size": 581603490,
+   "saved_pct": 9.04582025139835,
+   "c_MBps": 96.91032228325209,
+   "d_MBps": 364.14789835839554,
+   "lossless": true,
+   "chunks": {
+    "layout": 998,
+    "side": 1086,
+    "cfi": 91307,
+    "tables": 85413,
+    "lens": 23012,
+    "A": 32809834,
+    "B": 407334892,
+    "scls": 56195,
+    "C": 139371459,
+    "Clens": 48617,
+    "Ctables": 4820,
+    "Cside": 57,
+    "Cpar": 769563,
+    "Ccoef": 239522,
+    "Cfbin": 57441,
+    "Cmu": 3850,
+    "Ccadj": 18,
+    "rest": 705149
+   },
+   "timing": {
+    "compress": {
+     "upload + gather": 0.453,
+     "statistics": 4.109,
+     "histograms": 0.026,
+     "tables": 0.016,
+     "encode + download": 0.227,
+     "extra phase": 0.781,
+     "pack (wait header)": 0.499
+    },
+    "decompress": {
+     "unpack": 0.118,
+     "upload + luts": 0.298,
+     "decode": 1.063,
+     "assemble + download": 0.113,
+     "header": 0.001
+    }
+   }
+  },
+  {
+   "method": "M20 = M19 + tokenizer stored as BPE (left, right) id pairs",
+   "size": 581486498,
+   "saved_pct": 9.06411606904749,
+   "c_MBps": 87.81502793527294,
+   "d_MBps": 303.18197004036006,
+   "lossless": true,
+   "chunks": {
+    "layout": 998,
+    "side": 1086,
+    "cfi": 91307,
+    "tables": 85413,
+    "lens": 23012,
+    "A": 32809834,
+    "B": 407334892,
+    "scls": 56195,
+    "C": 139371459,
+    "Clens": 48617,
+    "Ctables": 4820,
+    "Cside": 57,
+    "Cpar": 769563,
+    "Ccoef": 239522,
+    "Cfbin": 57441,
+    "Cmu": 3850,
+    "Ccadj": 18,
+    "rest": 588157
+   },
+   "timing": {
+    "compress": {
+     "upload + gather": 0.558,
+     "statistics": 4.408,
+     "histograms": 0.027,
+     "tables": 0.017,
+     "encode + download": 0.237,
+     "extra phase": 0.973,
+     "pack (wait header)": 0.532
+    },
+    "decompress": {
+     "unpack": 0.115,
+     "upload + luts": 0.355,
+     "decode": 1.317,
+     "assemble + download": 0.139,
+     "header": 0.001
+    }
+   }
+  },
+  {
+   "method": "M21 = M20 + residual column factors, tuned waves/parents, attn_q/k rows",
+   "size": 581237262,
+   "saved_pct": 9.103092891459308,
+   "c_MBps": 54.54704470237927,
+   "d_MBps": 23.002358590748994,
+   "lossless": true,
+   "chunks": {
+    "layout": 998,
+    "side": 1086,
+    "cfi": 91307,
+    "tables": 79719,
+    "lens": 21083,
+    "A": 31454663,
+    "B": 353064340,
+    "scls": 56195,
+    "C": 194157396,
+    "Clens": 77390,
+    "Ctables": 147052,
+    "Cside": 130,
+    "Cpar": 980891,
+    "Ccoef": 333713,
+    "Cfbin": 69456,
+    "Cmu": 109811,
+    "Ccadj": 3618,
+    "rest": 588157
+   },
+   "timing": {
+    "compress": {
+     "upload + gather": 0.568,
+     "statistics": 7.794,
+     "histograms": 0.025,
+     "tables": 0.016,
+     "encode + download": 0.202,
+     "extra phase": 1.876,
+     "pack (wait header)": 0.51
+    },
+    "decompress": {
+     "unpack": 0.116,
+     "upload + luts": 0.327,
+     "decode": 25.879,
+     "assemble + download": 0.11,
+     "header": 0.001
+    }
+   }
+  }
+ ]
+}

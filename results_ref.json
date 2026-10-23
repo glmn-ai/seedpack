@@ -1,0 +1,62 @@
+{
+ "file": "models/Qwen3-0.6B-Q8_0.gguf",
+ "size": 639446688,
+ "results": [
+  {
+   "method": "M12 ref=Base Q8_0, XOR delta + zstd",
+   "refs": [
+    "models/ref/Qwen3-0.6B-Base.Q8_0.gguf"
+   ],
+   "size": 453916402,
+   "saved_pct": 29.014191406680645,
+   "c_MBps": 8.52444314699822,
+   "d_MBps": 360.6953535713337,
+   "lossless": true
+  },
+  {
+   "method": "M13 ref=Base Q8_0, predictive residual + context",
+   "refs": [
+    "models/ref/Qwen3-0.6B-Base.Q8_0.gguf"
+   ],
+   "size": 387856547,
+   "saved_pct": 39.34497522958473,
+   "c_MBps": 11.872767787196675,
+   "d_MBps": 15.0015871479883,
+   "lossless": true
+  },
+  {
+   "method": "M14 ref=Q4_K_M same model, predictive residual + context",
+   "refs": [
+    "models/ref/Qwen3-0.6B-Q4_K_M.gguf"
+   ],
+   "size": 260447951,
+   "saved_pct": 59.26979435696131,
+   "c_MBps": 11.948657603488599,
+   "d_MBps": 14.432506157658874,
+   "lossless": true
+  },
+  {
+   "method": "M15 ref=BF16 original, exact re-quantisation",
+   "refs": [
+    "models/ref/Qwen3-0.6B-BF16.gguf"
+   ],
+   "size": 81632676,
+   "saved_pct": 87.23385740642073,
+   "c_MBps": 12.311454681116395,
+   "d_MBps": 14.897084987126672,
+   "lossless": true
+  },
+  {
+   "method": "M16 ref=Base Q8_0 + Q4_K_M, least-squares mix",
+   "refs": [
+    "models/ref/Qwen3-0.6B-Base.Q8_0.gguf",
+    "models/ref/Qwen3-0.6B-Q4_K_M.gguf"
+   ],
+   "size": 255898039,
+   "saved_pct": 59.981333267926786,
+   "c_MBps": 8.966170434099558,
+   "d_MBps": 12.3869415788134,
+   "lossless": true
+  }
+ ]
+}

@@ -1,0 +1,63 @@
+[
+ {
+  "method": "M22 BF16: exponent/mantissa/sign context rANS",
+  "raw": 1198182848,
+  "size": 782452527,
+  "saved_pct": 34.696734450333246,
+  "c_MBps": 21.838997097672024,
+  "d_MBps": 44.686949143306165,
+  "lossless": true
+ },
+ {
+  "method": "M24 BF16 context rANS on GPU (port of M22)",
+  "raw": 1198182848,
+  "size": 782650261,
+  "saved_pct": 34.680231626884385,
+  "c_MBps": 454.45516662666245,
+  "d_MBps": 1617.3060422979102,
+  "lossless": true,
+  "timing": {
+   "compress": {
+    "upload": 0.503,
+    "statistics": 0.309,
+    "histogram + encode": 0.749,
+    "header": 0.728
+   },
+   "decompress": {
+    "unpack + upload": 0.174,
+    "decode": 0.072,
+    "header": 0.003,
+    "download": 0.211
+   }
+  }
+ },
+ {
+  "method": "M23 model-repo bundle: BF16 (M22) + quants coded against it [BF16+Q8_0]",
+  "raw": 1837629536,
+  "size": 864085233,
+  "saved_pct": 52.97826813989563,
+  "c_MBps": 17.09807549499305,
+  "d_MBps": 25.305899488341105,
+  "lossless": true
+ },
+ {
+  "method": "M25 model-repo bundle on GPU (port of M23) [BF16+Q8_0]",
+  "raw": 1837629536,
+  "size": 864539979,
+  "saved_pct": 52.95352180277537,
+  "c_MBps": 380.0402505553891,
+  "d_MBps": 1214.3055451313269,
+  "lossless": true,
+  "timing": {
+   "compress": {
+    "base (M24)": 2.636,
+    "quants": 1.728
+   },
+   "decompress": {
+    "base (M24)": 0.577,
+    "base download": 0.488,
+    "quants": 0.191
+   }
+  }
+ }
+]

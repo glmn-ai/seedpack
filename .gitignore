@@ -1,0 +1,22 @@
+# models and archives (tens of GB)
+models/
+*.varc
+*.part
+
+# environment and caches
+.venv/
+__pycache__/
+*.pyc
+
+# build artefacts (rebuilt by third_party/ggml/build.sh and at first run)
+third_party/ggml/*.o
+third_party/ggml/*.dll
+third_party/ggml/*.so
+third_party/ggml/*.cubin
+third_party/ggml/*.cubin.tmp
+third_party/ggml/gpuquant.cu
+third_party/ggml/iqtables.npz
+third_party/ggml/*.tmp.npz
+
+# logs
+*.log

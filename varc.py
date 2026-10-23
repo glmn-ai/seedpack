@@ -1,0 +1,311 @@
+"""varc - lossless archiver for GGUF model repositories.
+
+    varc pack   INPUT... -o ARCHIVE.varc     archive files and/or directories
+    varc unpack ARCHIVE [NAME|GLOB ...] [-o DIR]   extract everything or only the given files
+    varc list   ARCHIVE                      show the files in an archive
+    varc test   ARCHIVE [NAME|GLOB ...]      decompress in memory and verify every checksum
+
+All BF16 GGUFs among the inputs (the model, mmproj) are coded as "bases"; every other GGUF is
+stored as the difference to what llama.cpp's quantiser produces from its base (GPU, bit-exact),
+so a whole repository of quantisations costs about as much as its BF16 file. Any other file is
+stored with LZMA (small files) or zstd. Extraction is always byte-exact and checked by BLAKE3 (or SHA-256) checksums.
+Requires an NVIDIA GPU (CUDA, CuPy).
+"""
+import argparse
+import fnmatch
+import hashlib
+import os
+import sys
+import time
+from collections import deque
+from concurrent.futures import ThreadPoolExecutor
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "src"))
+
+TOOL = "varc 0.1"
+
+
+def _hasher(algo):
+    """file checksum: BLAKE3 (multithreaded, ~20 GB/s) when installed, else SHA-256"""
+    if algo == "blake3":
+        import blake3
+        return lambda d: blake3.blake3(d, max_threads=blake3.blake3.AUTO).hexdigest()
+    return lambda d: hashlib.sha256(d).hexdigest()
+
+
+def default_algo():
+    try:
+        import blake3  # noqa: F401
+        return "blake3"
+    except ImportError:
+        return "sha256"
+SKIP_DIRS = {".git", ".cache", "__pycache__"}
+
+
+def human(n):
+    for u in ("B", "KB", "MB", "GB", "TB"):
+        if abs(n) < 1000 or u == "TB":
+            return f"{n:.0f} {u}" if u == "B" else f"{n:.2f} {u}"
+        n /= 1000
+
+
+def fail(msg):
+    print(f"varc: error: {msg}", file=sys.stderr)
+    sys.exit(2)
+
+
+def gpu_check():
+    try:
+        import cupy as cp
+        cp.cuda.runtime.getDeviceCount()
+        return cp
+    except Exception as e:                    # no driver / no device / no CuPy
+        fail(f"an NVIDIA GPU with CUDA is required ({e.__class__.__name__}: {e})")
+
+
+# ---------------------------------------------------------------------------------- inputs
+def collect(inputs):
+    """INPUT paths -> {archive name: path}; directories are walked, names are relative to them"""
+    out = {}
+    for inp in inputs:
+        if os.path.isdir(inp):
+            for root, dirs, fs in os.walk(inp):
+                dirs[:] = sorted(d for d in dirs if d not in SKIP_DIRS)
+                for f in sorted(fs):
+                    p = os.path.join(root, f)
+                    out.setdefault(os.path.relpath(p, inp).replace(os.sep, "/"), []).append(p)
+        elif os.path.isfile(inp):
+            out.setdefault(os.path.basename(inp), []).append(inp)
+        else:
+            fail(f"{inp}: no such file or directory")
+    dup = [n for n, ps in out.items() if len(ps) > 1]
+    if dup:
+        fail(f"several inputs map to the same name in the archive: {', '.join(dup[:5])}")
+    return {n: ps[0] for n, ps in out.items()}
+
+
+def gguf_role(path):
+    """'base' for a GGUF whose weights are mostly BF16, 'derived' for another GGUF, else None"""
+    from gguf_reader import GGUF, GGML_BF16
+    with open(path, "rb") as f:
+        if f.read(4) != b"GGUF":
+            return None
+    size = 32 << 20
+    while True:
+        with open(path, "rb") as f:
+            head = f.read(size)
+        try:
+            g = GGUF.from_bytes(head, light=True)
+            break
+        except Exception:
+            if len(head) < size:
+                return None                  # not a parsable GGUF: store as a plain file
+            size *= 4
+    total = sum(t.nbytes for t in g.tensors) or 1
+    bf16 = sum(t.nbytes for t in g.tensors if t.type == GGML_BF16)
+    return "base" if bf16 / total >= 0.5 else "derived"
+
+
+# ---------------------------------------------------------------------------------- pack
+def cmd_pack(a):
+    cp = gpu_check()
+    from container import Writer
+    from repo3 import M28RepoGPU, M29RepoGPU
+    files = collect(a.inputs)
+    if not files:
+        fail("nothing to archive")
+    out = a.output
+    if os.path.exists(out) and not a.force:
+        fail(f"{out} exists (use --force to overwrite)")
+    roles = {n: (gguf_role(p) if n.lower().endswith(".gguf") else None) for n, p in files.items()}
+    bases = {n: p for n, p in files.items() if roles[n] == "base"}
+    derived = {n: p for n, p in files.items() if roles[n] == "derived"}
+    extras = {n: p for n, p in files.items() if roles[n] is None}
+    total = sum(os.path.getsize(p) for p in files.values())
+    print(f"{len(files)} files, {human(total)}: {len(bases)} BF16 base(s), {len(derived)} derived GGUF(s), "
+          f"{len(extras)} other file(s)")
+    if derived and not bases:
+        print("  note: no BF16 GGUF among the inputs - GGUFs are stored with zstd only "
+              "(include the BF16 model for the large gain)")
+    m = (M28RepoGPU if a.method == "m28" else M29RepoGPU)(level=a.level, cache_bytes=a.cache << 20)
+    m.verbose = not a.quiet
+    algo = default_algo()
+    digest = _hasher(algo)
+    hashes = {}
+    hp = ThreadPoolExecutor(2)
+    jobs = []
+
+    def on_data(name, data):
+        # called once per input, before it is modified. A derived GGUF arrives in the reader
+        # thread (already parallel to the GPU work) and is XOR-ed right after: hashed here.
+        # Bases and other files are not modified: hashed in the pool.
+        if roles[name] == "derived":
+            hashes[name] = digest(data)
+        else:
+            jobs.append((name, hp.submit(lambda d=data: digest(d))))
+
+    w = Writer(out)
+    t0 = time.perf_counter()
+    try:
+        m.compress(bases, derived, extras, put=w.put, on_data=on_data)
+        for n, f in jobs:
+            hashes[n] = f.result()
+        catalog = []
+        for n, p in files.items():
+            catalog.append({"name": n, "size": os.path.getsize(p), "hash": hashes[n],
+                            "role": roles[n] or "file", "stored": m.sizes.get(n)})
+        w.close({"tool": TOOL, "method": m.name, "created": time.strftime("%Y-%m-%dT%H:%M:%S"), "hash": algo,
+                 "files": catalog, "total": total})
+    except BaseException:
+        w.abort()
+        raise
+    dt = time.perf_counter() - t0
+    size = os.path.getsize(out)
+    print(f"{out}: {human(total)} -> {human(size)} ({100 * size / total:.2f}%"
+          + (f", {100 * size / sum(os.path.getsize(p) for p in bases.values()):.1f}% of the BF16 base(s)" if bases else "")
+          + f") in {dt:.1f} s ({total / dt / 1e6:.0f} MB/s)")
+
+
+# ---------------------------------------------------------------------------------- unpack / test
+def select(meta, patterns):
+    names = [f["name"] for f in meta["files"]]
+    if not patterns:
+        return None, names
+    chosen = []
+    for pat in patterns:
+        hit = [n for n in names if fnmatch.fnmatchcase(n, pat) or n == pat or os.path.basename(n) == pat]
+        if not hit:
+            fail(f"{pat}: no such file in the archive (see 'varc list')")
+        chosen += [n for n in hit if n not in chosen]
+    return set(chosen), chosen
+
+
+class Output:
+    """receives decompressed files: verifies checksum and (unless testing) writes them, both in
+    background threads, with at most `budget` bytes waiting"""
+
+    def __init__(self, catalog, algo, outdir=None, budget=3 << 30):
+        self.cat = {f["name"]: f for f in catalog}
+        self.digest = _hasher(algo)
+        self.outdir, self.budget = outdir, budget
+        self.pool = ThreadPoolExecutor(4)
+        self.pending = deque()
+        self.done, self.bad, self.bytes = [], [], 0
+
+    def __call__(self, name, data):
+        self.pending.append((name, self.pool.submit(self._one, name, data), len(data)))
+        while len(self.pending) > 1 and sum(s for _, _, s in self.pending) > self.budget:
+            self._collect()
+
+    def _one(self, name, data):
+        ok = self.digest(data) == self.cat[name]["hash"]
+        if self.outdir is not None and ok:
+            path = os.path.join(self.outdir, *name.split("/"))
+            os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+            with open(path + ".part", "wb") as f:
+                f.write(data)
+            os.replace(path + ".part", path)
+        return ok
+
+    def _collect(self):
+        name, f, size = self.pending.popleft()
+        ok = f.result()
+        (self.done if ok else self.bad).append(name)
+        self.bytes += size
+        print(f"  {'OK ' if ok else 'BAD'} {name} ({human(size)})", flush=True)
+
+    def finish(self):
+        while self.pending:
+            self._collect()
+
+
+def _extract(a, outdir):
+    gpu_check()
+    from container import Reader, FormatError
+    from repo3 import M28RepoGPU, M29RepoGPU
+    try:
+        r = Reader(a.archive)
+    except (FormatError, OSError) as e:
+        fail(str(e))
+    meta = r.meta
+    sel, names = select(meta, a.files)
+    if outdir is not None and not a.force:
+        clash = [n for n in names if os.path.exists(os.path.join(outdir, *n.split("/")))]
+        if clash:
+            fail(f"{len(clash)} file(s) already exist in {outdir}, e.g. {clash[0]} (use --force to overwrite)")
+    cls = M28RepoGPU if meta["method"].startswith("M28") else M29RepoGPU
+    m = cls(cache_bytes=a.cache << 20)
+    out = Output(meta["files"], meta["hash"], outdir)
+    t0 = time.perf_counter()
+    try:
+        m.decompress(r.get, out, select=sel)
+        out.finish()
+    except FormatError as e:
+        fail(str(e))
+    dt = time.perf_counter() - t0
+    missing = [n for n in names if n not in out.done and n not in out.bad]
+    verb = "extracted" if outdir is not None else "tested"
+    print(f"{verb} {len(out.done)} file(s), {human(out.bytes)} in {dt:.1f} s ({out.bytes / max(dt, 1e-9) / 1e6:.0f} MB/s)")
+    if out.bad or missing:
+        fail(f"{len(out.bad)} file(s) failed the checksum check, {len(missing)} missing: {', '.join((out.bad + missing)[:5])}")
+
+
+def cmd_unpack(a):
+    _extract(a, a.output)
+
+
+def cmd_test(a):
+    _extract(a, None)
+
+
+def cmd_list(a):
+    from container import Reader, FormatError
+    try:
+        r = Reader(a.archive)
+    except (FormatError, OSError) as e:
+        fail(str(e))
+    meta = r.meta
+    w = max(len(f["name"]) for f in meta["files"])
+    print(f"{a.archive}: {meta['tool']}, {meta['method']}, created {meta['created']}")
+    print(f"{'name':{w}s} {'size':>12s} {'stored':>12s}  role")
+    for f in meta["files"]:
+        st = human(f["stored"]) if f.get("stored") is not None else "(bundle)"
+        print(f"{f['name']:{w}s} {human(f['size']):>12s} {st:>12s}  {f['role']}")
+    print(f"{len(meta['files'])} files, {human(meta['total'])} -> archive {human(r.size)} "
+          f"({100 * r.size / meta['total']:.2f}%)")
+
+
+def main(argv=None):
+    p = argparse.ArgumentParser(prog="varc", description=__doc__.split("\n\n")[0],
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = p.add_subparsers(dest="cmd", required=True)
+    s = sub.add_parser("pack", aliases=["a"], help="archive files and/or directories")
+    s.add_argument("inputs", nargs="+", help="files or directories (directory contents keep their relative paths)")
+    s.add_argument("-o", "--output", required=True, help="archive to create (.varc)")
+    s.add_argument("--method", choices=["m29", "m28"], default="m29", help="m29 (default): BF16 v2 base codec; m28: M24 codec")
+    s.add_argument("--level", type=int, default=9, help="zstd level of the residuals (default 9)")
+    s.add_argument("--cache", type=int, default=2048, help="prediction cache in MB (default 2048)")
+    s.add_argument("-f", "--force", action="store_true", help="overwrite the archive")
+    s.add_argument("-q", "--quiet", action="store_true", help="no per-file progress")
+    s.set_defaults(fn=cmd_pack)
+    for name, alias, fn, hlp in (("unpack", "x", cmd_unpack, "extract all or selected files"),
+                                 ("test", "t", cmd_test, "decompress in memory and verify checksum")):
+        s = sub.add_parser(name, aliases=[alias], help=hlp)
+        s.add_argument("archive")
+        s.add_argument("files", nargs="*", help="names or glob patterns (e.g. '*Q4_K_M*'); default: everything")
+        if name == "unpack":
+            s.add_argument("-o", "--output", default=".", help="output directory (default: current)")
+            s.add_argument("-f", "--force", action="store_true", help="overwrite existing files")
+        else:
+            s.set_defaults(force=True)
+        s.add_argument("--cache", type=int, default=1024, help="prediction cache in MB (default 1024)")
+        s.set_defaults(fn=fn)
+    s = sub.add_parser("list", aliases=["l"], help="list the files in an archive")
+    s.add_argument("archive")
+    s.set_defaults(fn=cmd_list)
+    a = p.parse_args(argv)
+    a.fn(a)
+
+
+if __name__ == "__main__":
+    main()

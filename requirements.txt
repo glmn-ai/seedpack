@@ -1,0 +1,9 @@
+numpy==2.4.6
+numba==0.68.0
+zstandard==0.25.0
+cupy-cuda13x==14.2.0
+nvidia-cuda-nvrtc==13.4.92
+nvidia-nvjitlink==13.4.92
+blake3==1.0.11
+# optional: memory diagnostics (VARC_MEMDEBUG=1)
+psutil==7.2.2
