@@ -6,10 +6,10 @@ re-quantise + context-coded correction). The receiver needs nothing but the arch
 """
 import struct
 
-from codecs_gguf import pack, unpack
-from bf16codec import M22BF16
-from gguf_reader import GGUF
-from refcodec import RefCodec, sha
+from .codecs_gguf import pack, unpack
+from .bf16codec import M22BF16
+from .gguf_reader import GGUF
+from .refcodec import RefCodec, sha
 
 
 class _InArchiveRef(RefCodec):

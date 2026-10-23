@@ -12,7 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 
-_DLL = os.path.join(os.path.dirname(__file__), "..", "third_party", "ggml", "ggmlq.dll")
+_DLL = os.path.join(os.path.dirname(__file__), "ggml", "ggmlq.dll" if os.name == "nt" else "libggmlq.so")
 _lib = None
 _lock = threading.Lock()
 _inited = set()
@@ -32,6 +32,9 @@ IQ3_INIT = {18: 256, 21: 512}              # iq3xs_init_impl(grid size)
 def lib():
     global _lib
     if _lib is None:
+        if not os.path.exists(_DLL):
+            raise RuntimeError(f"{_DLL} is missing: build it with seedpack/ggml/build.sh (needed only to "
+                               "rebuild the IQ tables and for the CPU quantisers of the research scripts)")
         _lib = ctypes.CDLL(os.path.abspath(_DLL))
         for name, _, _ in QFUN.values():
             f = getattr(_lib, name)
@@ -74,7 +77,7 @@ def load_imatrix(path_or_bytes, divide=True):
 def _load_imatrix_gguf(buf):
     """GGUF imatrix: per tensor '<name>.in_sum2' (n_mat x ne0) and '<name>.counts' (n_mat);
     value = in_sum2 / count per matrix, 1 where the matrix never saw a token"""
-    from gguf_reader import GGUF
+    from .gguf_reader import GGUF
     g = GGUF.from_bytes(buf)
     ts = {t.name: t for t in g.tensors}
     out = {}

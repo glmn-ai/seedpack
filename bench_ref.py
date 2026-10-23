@@ -1,7 +1,7 @@
 """Reference-based methods (M12-M16): the receiver already has the reference GGUF(s)."""
 import hashlib, json, sys, time
-sys.path.insert(0, "src")
-from refcodec import M12RefXor, M13RefBase, M14RefQ4, M15RefBF16, M16RefMix
+sys.path.insert(0, ".")
+from seedpack.refcodec import M12RefXor, M13RefBase, M14RefQ4, M15RefBF16, M16RefMix
 
 path = "models/Qwen3-0.6B-Q8_0.gguf"
 BASE, Q4, BF16 = "models/ref/Qwen3-0.6B-Base.Q8_0.gguf", "models/ref/Qwen3-0.6B-Q4_K_M.gguf", "models/ref/Qwen3-0.6B-BF16.gguf"

@@ -1,8 +1,8 @@
 """Whole unsloth/Qwen3-0.6B-GGUF repository (BF16 + 25 quants) in one M26 archive."""
 import glob, hashlib, json, os, sys, time
-sys.path.insert(0, "src")
-from gguf_reader import GGUF, TYPE_NAMES
-from repo import M26Repo
+sys.path.insert(0, ".")
+from seedpack.gguf_reader import GGUF, TYPE_NAMES
+from seedpack.repo import M26Repo
 
 d = "models/unsloth"
 base_path = os.path.join(d, "Qwen3-0.6B-BF16.gguf")

@@ -18,9 +18,9 @@ import cupy as cp
 import numpy as np
 import zstandard
 
-from codecs_gguf import pack, unpack, zstd_c, zstd_d
-from gguf_reader import GGUF, GGML_BF16, GGML_Q8_0
-from gpu2 import (header_pairs_c, header_pairs_d, xz_chunks_c, xz_chunks_d, rest_of,
+from .codecs_gguf import pack, unpack, zstd_c, zstd_d
+from .gguf_reader import GGUF, GGML_BF16, GGML_Q8_0
+from .gpu2 import (header_pairs_c, header_pairs_d, xz_chunks_c, xz_chunks_d, rest_of,
                   normalize_gpu, cum_of, store_tables, load_tables, PB, Timer, GPU2)
 
 SEG = 16384            # bf16 weights per thread

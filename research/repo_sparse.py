@@ -16,12 +16,12 @@ import cupy as cp
 import numpy as np
 import zstandard
 
-sys.path.insert(0, os.path.dirname(__file__)); sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
-from codecs_gguf import pack, unpack, zstd_c, zstd_d
-from gguf_reader import GGUF, Tensor
-from gpuquant import VARIANTS
-from repo3 import M28RepoGPU, _par_xor
-from bf16v2 import BF16v2
+sys.path.insert(0, os.path.dirname(__file__)); sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+from seedpack.codecs_gguf import pack, unpack, zstd_c, zstd_d
+from seedpack.gguf_reader import GGUF, Tensor
+from seedpack.gpuquant import VARIANTS
+from seedpack.repo3 import M28RepoGPU, _par_xor
+from seedpack.bf16v2 import BF16v2
 from extras_codec import enc_imatrix, dec_imatrix
 
 

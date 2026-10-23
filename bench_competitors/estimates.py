@@ -16,8 +16,8 @@ import time
 import numba
 import numpy as np
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
-from gguf_reader import GGUF, GGML_BF16  # noqa: E402
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+from seedpack.gguf_reader import GGUF, GGML_BF16  # noqa: E402
 
 
 def huffman_bits(counts):

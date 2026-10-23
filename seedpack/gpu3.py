@@ -19,8 +19,8 @@ import struct
 import cupy as cp
 import numpy as np
 
-from codecs_gguf import pack, unpack, zstd_c, zstd_d
-from gpu2 import GPU2, normalize_gpu, cum_of, PB, store_tables, load_tables, _trim, parse_layout, fill_rest
+from .codecs_gguf import pack, unpack, zstd_c, zstd_d
+from .gpu2 import GPU2, normalize_gpu, cum_of, PB, store_tables, load_tables, _trim, parse_layout, fill_rest
 
 C_KERNELS = r"""
 #define PB 12

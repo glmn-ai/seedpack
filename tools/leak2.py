@@ -1,9 +1,9 @@
 import os, sys
-sys.path.insert(0, "src")
+sys.path.insert(0, ".")
 os.environ["VARC_MEMDEBUG"] = "1"
 import numpy as np, cupy as cp
-import repo3
-from repo3 import M29RepoGPU, _keep_base, _mem, _release
+from seedpack import repo3
+from seedpack.repo3 import M29RepoGPU, _keep_base, _mem, _release
 d = "models/qwen35-2b"
 m = M29RepoGPU(cache_bytes=1 << 30)
 kept = []

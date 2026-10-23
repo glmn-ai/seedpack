@@ -1,10 +1,10 @@
 """Per-file exactness of M28's predictions on the complete GGUFs of a repository directory:
 check_repo_exact.py <dir> [file substrings...]"""
 import glob, os, sys, collections
-sys.path.insert(0, "src")
+sys.path.insert(0, ".")
 import numpy as np, cupy as cp
-from repo3 import M28RepoGPU, _par_xor
-from gguf_reader import GGUF, TYPE_NAMES
+from seedpack.repo3 import M28RepoGPU, _par_xor
+from seedpack.gguf_reader import GGUF, TYPE_NAMES
 d = sys.argv[1]; only = sys.argv[2:]
 paths = sorted(glob.glob(os.path.join(d, "*.gguf")))
 bases = [p for p in paths if "BF16" in os.path.basename(p)]

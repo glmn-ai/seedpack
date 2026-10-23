@@ -14,15 +14,15 @@ import os
 import sys
 from collections import defaultdict
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import cupy as cp
 import numpy as np
 import zstandard
 
-from gguf_reader import GGUF, TYPE_NAMES, BLOCK, GGML_Q8_0, GGML_F16, GGML_F32, GGML_BF16
-from repo3 import M29RepoGPU, _keep_base, _read_file, _gguf_tensors
-from requant import QFUN, load_imatrix
-from seed import bits_per_weight
+from seedpack.gguf_reader import GGUF, TYPE_NAMES, BLOCK, GGML_Q8_0, GGML_F16, GGML_F32, GGML_BF16
+from seedpack.repo3 import M29RepoGPU, _keep_base, _read_file, _gguf_tensors
+from seedpack.requant import QFUN, load_imatrix
+from seedpack.seed import bits_per_weight
 
 
 def opt(name, default):

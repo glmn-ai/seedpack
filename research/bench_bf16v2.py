@@ -14,7 +14,7 @@ t0 = time.perf_counter(); arc = c.compress(data); t1 = time.perf_counter()
 out = c.decompress(arc); t2 = time.perf_counter()
 ok = bool(np.array_equal(out, np.frombuffer(data, np.uint8))); del out
 peak = cp.get_default_memory_pool().total_bytes()
-from codecs_gguf import unpack
+from seedpack.codecs_gguf import unpack
 parts = {k: len(v) for k, v in unpack(arc).items()}
 r = dict(method=c.name, file=path, raw=len(data), size=len(arc), pct=100 * len(arc) / len(data),
          vs_M24=len(arc) - 782650261, c_MBps=len(data) / (t1 - t0) / 1e6, d_MBps=len(data) / (t2 - t1) / 1e6,

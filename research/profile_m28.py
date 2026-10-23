@@ -1,12 +1,12 @@
 """Where does M28 spend its time? Wraps the main steps with wall-clock accumulators.
 usage: profile_m28.py [repo dir]"""
 import glob, os, sys, time, threading, collections
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import numpy as np
 import cupy as cp
 import repo3, gpuquant, gguf_reader
-from repo3 import M28RepoGPU
-from gpuquant import GPUQuant
+from seedpack.repo3 import M28RepoGPU
+from seedpack.gpuquant import GPUQuant
 
 T = collections.defaultdict(float); lock = threading.Lock()
 

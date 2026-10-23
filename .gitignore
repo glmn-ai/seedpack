@@ -8,15 +8,17 @@ models/
 __pycache__/
 *.pyc
 
-# build artefacts (rebuilt by third_party/ggml/build.sh and at first run)
-third_party/ggml/*.o
-third_party/ggml/*.dll
-third_party/ggml/*.so
-third_party/ggml/*.cubin
-third_party/ggml/*.cubin.tmp
-third_party/ggml/gpuquant.cu
-third_party/ggml/iqtables.npz
-third_party/ggml/*.tmp.npz
+# build artefacts (seedpack/ggml/build.sh; kernels are cached outside the tree)
+seedpack/ggml/*.o
+seedpack/ggml/*.dll
+seedpack/ggml/*.so
+seedpack/ggml/*.cubin
+seedpack/ggml/*.cubin.tmp
+seedpack/ggml/gpuquant.cu
+seedpack/ggml/*.tmp.npz
+build/
+dist/
+*.egg-info/
 
 # logs
 *.log

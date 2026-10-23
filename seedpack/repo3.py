@@ -22,15 +22,15 @@ import blake3
 import numpy as np
 import zstandard
 
-from codecs_gguf import pack, unpack, zstd_c, zstd_d
-from gguf_reader import GGUF
-from gpu_bf16 import M24BF16GPU
-import gpuquant
-import qr
-from gpuquant import GPUQuant, VARIANTS, to_host
-from repo2 import F32, F16, BF16, base_float_np, float_as_np
-from requant import QFUN, load_imatrix
-from seed import SeedCodec, bits_per_weight
+from .codecs_gguf import pack, unpack, zstd_c, zstd_d
+from .gguf_reader import GGUF
+from .gpu_bf16 import M24BF16GPU
+from . import gpuquant
+from . import qr
+from .gpuquant import GPUQuant, VARIANTS, to_host
+from .repo2 import F32, F16, BF16, base_float_np, float_as_np
+from .requant import QFUN, load_imatrix
+from .seed import SeedCodec, bits_per_weight
 
 
 _POOL = ThreadPoolExecutor(8)
@@ -528,14 +528,14 @@ class M28RepoGPU:
 
     def _q8_codec(self):
         if getattr(self, "_q8", None) is None:
-            from gpu3 import Q8Parts
+            from .gpu3 import Q8Parts
             self._q8 = Q8Parts(int(os.environ.get("VARC_Q8_PART_MB", 0)) << 20 or None)
         return self._q8
 
     def _no_base(self, data):
         """a GGUF that no base predicts: M21 (context-modelled Q8_0 on the GPU) when the file is
         mostly Q8_0 (coded in parts that fit in GPU memory); else None (zstd)"""
-        from gguf_reader import GGML_Q8_0
+        from .gguf_reader import GGML_Q8_0
         try:
             g = GGUF.from_bytes(data, light=True)
         except Exception:
@@ -557,10 +557,10 @@ class M28RepoGPU:
         try:
             ch = unpack(buf)
             if is_seed:
-                from gpu2 import GPU2
+                from .gpu2 import GPU2
                 rest = GPU2._header_d(ch["rest"])
             elif "r2" in ch:
-                from gpu_bf16 import M24BF16GPU
+                from .gpu_bf16 import M24BF16GPU
                 rest = M24BF16GPU._header_d(unpack(ch["r2"])["rest"])
             else:
                 return None
@@ -910,7 +910,7 @@ class R2Base:
     finer contexts, role-shared tables, duplicate rows, bounded GPU memory)"""
 
     def __init__(self, budget=1_500_000_000):
-        from bf16v2 import BF16v2
+        from .bf16v2 import BF16v2
         self.c = BF16v2(budget=budget)
 
     def compress_dev(self, data, dev=None):

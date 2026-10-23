@@ -10,14 +10,14 @@ import os
 import sys
 from collections import defaultdict
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import numpy as np
 import zstandard
 
-from gguf_reader import GGUF, TYPE_NAMES, BLOCK
-from repo3 import M29RepoGPU, _keep_base, _read_file, _gguf_tensors
-from requant import load_imatrix
-from seed import bits_per_weight
+from seedpack.gguf_reader import GGUF, TYPE_NAMES, BLOCK
+from seedpack.repo3 import M29RepoGPU, _keep_base, _read_file, _gguf_tensors
+from seedpack.requant import load_imatrix
+from seedpack.seed import bits_per_weight
 
 args = [a for a in sys.argv[1:] if not a.startswith("--")]
 level = int(sys.argv[sys.argv.index("--level") + 1]) if "--level" in sys.argv else 7

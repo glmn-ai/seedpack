@@ -1,11 +1,11 @@
 """GPU quantisers vs the CPU library: bit-exactness on real tensors of every type, and speed."""
 import glob, os, sys, time, collections
-sys.path.insert(0, "src")
+sys.path.insert(0, ".")
 import numpy as np, cupy as cp
-from gguf_reader import GGUF, TYPE_NAMES
-from requant import QFUN, quantize, load_imatrix
-from repo2 import base_float_np
-from gpuquant import GPUQuant
+from seedpack.gguf_reader import GGUF, TYPE_NAMES
+from seedpack.requant import QFUN, quantize, load_imatrix
+from seedpack.repo2 import base_float_np
+from seedpack.gpuquant import GPUQuant
 
 d = "models/unsloth"
 base = open(os.path.join(d, "Qwen3-0.6B-BF16.gguf"), "rb").read()

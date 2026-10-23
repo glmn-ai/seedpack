@@ -16,10 +16,10 @@ from concurrent.futures import ThreadPoolExecutor
 import cupy as cp
 import numpy as np
 
-from codecs_gguf import pack, unpack, zstd_c, zstd_d, group_of
-from gguf_reader import GGUF, BLOCK, GGML_F16, GGML_BF16, GGML_Q8_0
-from gpu2 import fill_rest, _trim
-import qr
+from .codecs_gguf import pack, unpack, zstd_c, zstd_d, group_of
+from .gguf_reader import GGUF, BLOCK, GGML_F16, GGML_BF16, GGML_Q8_0
+from .gpu2 import fill_rest, _trim
+from . import qr
 
 
 OTHER_MIN = 1 << 16       # smaller tensors stay with the header bytes
@@ -58,8 +58,8 @@ class SeedCodec:
     """a quantised GGUF coded by parts (see the module docstring); decompress -> numpy uint8"""
 
     def __init__(self):
-        from gpu3 import Q8Parts
-        from bf16v2 import BF16v2
+        from .gpu3 import Q8Parts
+        from .bf16v2 import BF16v2
         self.q8 = Q8Parts()
         self.r2 = BF16v2(budget=1_500_000_000)
 

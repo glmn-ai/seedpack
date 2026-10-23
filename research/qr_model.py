@@ -13,15 +13,15 @@ import os
 import sys
 from collections import defaultdict
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import cupy as cp
 import numpy as np
 import zstandard
 
-from gguf_reader import GGUF, GGML_Q8_0, GGML_F16
-from repo3 import M29RepoGPU, _keep_base, _read_file, _gguf_tensors
-from requant import load_imatrix
-from seed import bits_per_weight
+from seedpack.gguf_reader import GGUF, GGML_Q8_0, GGML_F16
+from seedpack.repo3 import M29RepoGPU, _keep_base, _read_file, _gguf_tensors
+from seedpack.requant import load_imatrix
+from seedpack.seed import bits_per_weight
 
 
 from qunpack import f16, scale_min_k4, q4_0, q4_k, q6_k  # noqa: E402

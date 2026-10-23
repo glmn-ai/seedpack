@@ -1,9 +1,9 @@
 import os, sys
-sys.path.insert(0, "src")
+sys.path.insert(0, ".")
 import numpy as np, cupy as cp
-from gguf_reader import GGUF
-from requant import QFUN, load_imatrix
-from gpuquant import GPUQuant
+from seedpack.gguf_reader import GGUF
+from seedpack.requant import QFUN, load_imatrix
+from seedpack.gpuquant import GPUQuant
 d = "models/qwen35-2b"
 base = open(os.path.join(d, "Qwen3.5-2B-BF16.gguf"), "rb").read()
 by = {t.name: t for t in GGUF.from_bytes(base, light=True).tensors}

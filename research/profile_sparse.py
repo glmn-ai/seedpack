@@ -4,7 +4,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 import numpy as np, cupy as cp
 import repo_sparse
 from repo_sparse import R3RepoSparse, R2Base
-from gpuquant import GPUQuant
+from seedpack.gpuquant import GPUQuant
 T = collections.defaultdict(float)
 def wrap(obj, name, label):
     f = getattr(obj, name)

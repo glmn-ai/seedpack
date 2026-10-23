@@ -24,62 +24,77 @@
 Скорость, время и все наборы — в `bench_competitors/VS_LMZ.md`; план развития — в `ROADMAP.md`.
 Распаковка проверяет контрольные суммы. Измерено на RTX 5070, Core i7-8700K (6 ядер, 12 потоков) и NVMe-диске.
 
+## Установка
+
+```
+pip install seedpack
+```
+
+Нужны видеокарта NVIDIA (Turing и новее) с драйвером CUDA 13 (R580+) и Python 3.11+; CUDA Toolkit не нужен (NVRTC, nvJitLink и заголовки ставятся из pip). Проверено на RTX 5070: Windows 10 (Python 3.11) и Ubuntu в WSL2 (Python 3.14). Архивы переносимы между ОС: собранный на Windows распаковывается на Linux бит-в-бит и наоборот. При первом запуске квантизаторы компилируются под вашу видеокарту (около 15 с) и кэшируются в `%LOCALAPPDATA%\seedpack\cache` (или `~/.cache/seedpack`, или `SEEDPACK_CACHE`).
+
 ## Использование
 
 ```
-varc pack   ВХОДЫ... -o архив.varc          # файлы и/или папки
-varc unpack архив.varc [ИМЕНА|МАСКИ] -o DIR  # всё или выбранные файлы
-varc list   архив.varc
-varc test   архив.varc [ИМЕНА|МАСКИ]        # распаковка в памяти + проверка
+seedpack pack   ВХОДЫ... -o архив.varc          # файлы и/или папки
+seedpack unpack АРХИВ [ИМЕНА|МАСКИ] -o DIR       # всё или выбранные файлы (alias: x)
+seedpack list   АРХИВ
+seedpack test   АРХИВ [ИМЕНА|МАСКИ]              # распаковка в памяти + проверка
 ```
+
+АРХИВ — файл `.varc` или архив на Hugging Face: `hf://OWNER/REPO[/FILE.varc][@REVISION]` либо ссылка `https://huggingface.co/...`. `list` читает по сети только индекс, `unpack` и `test` один раз скачивают архив в кэш Hugging Face.
 
 Примеры:
 ```
-varc pack models/Qwen3-0.6B-GGUF -o qwen3.varc
-varc x qwen3.varc Qwen3-0.6B-Q4_K_M.gguf -o out
-varc x qwen3.varc "*IQ1*" README.md -o out
+seedpack x hf://neurosquad/Qwen3-0.6B-SEEDPACK Qwen3-0.6B-Q4_K_M.gguf -o models
+seedpack pack models/Qwen3-0.6B-GGUF -o qwen3.varc
+seedpack x qwen3.varc "*IQ1*" README.md -o out
 ```
 
 Роли файлов определяются автоматически:
 - GGUF, где больше половины весов в BF16, — это база (модель, mmproj);
-- остальные GGUF выводятся из баз; кванты без BF16-модели — из старшего кванта (семени, `src/seed.py`);
+- остальные GGUF выводятся из баз; кванты без BF16-модели — из старшего кванта (семени, `seedpack/seed.py`);
 - одинаковые тензоры разных файлов хранятся один раз;
 - прочие файлы сжимаются LZMA или zstd.
 
 Каждый файл проверяется по BLAKE3 (если пакета нет — по SHA-256), каждая часть архива — по CRC32.
 
-## Установка
-
-Требуется видеокарта NVIDIA с CUDA 13 и Python 3.11.
+## Разработка
 
 ```
+git clone https://github.com/glmn-ai/seedpack && cd seedpack
 python -m venv .venv
-.venv\Scripts\pip install -r requirements.txt
-sh third_party/ggml/build.sh      # CPU-библиотека квантизаторов (MinGW gcc)
-varc.cmd --help
+.venv\Scripts\pip install -r requirements.txt -e .
+sh seedpack/ggml/build.sh         # CPU-библиотека квантизаторов (MinGW gcc): нужна только исследовательским скриптам
+python varc.py --help             # то же, что seedpack
 ```
 
-При первом запуске квантизатор для GPU компилируется из `third_party/ggml/ggml-quants.c` примерно за минуту, а таблицы IQ-сеток строятся около 25 с. Оба результата кэшируются.
+Таблицы IQ-сеток (`seedpack/ggml/iqtables.npz`) построены CPU-библиотекой и лежат в пакете; без файла они строятся заново (около 25 с, нужна `ggmlq.dll`).
+
+Публикация: `python -m build` → `twine upload dist/*`.
 
 ## Устройство
 
-- `varc.py` — CLI; `src/container.py` — формат `.varc` (части + индекс в конце, произвольный доступ).
-- `src/repo3.py` — ядро: M28/M29 (базы, предсказание квантов, остатки, конвейер).
-- `src/gpuquant.py` — генерация CUDA-кода из `ggml-quants.c`, бит-в-бит с CPU; варианты квантизаторов старых версий llama.cpp.
-- `src/ptxfix.py` — обход ошибки ptxas при делении на константу.
-- `src/bf16v2.py` — кодек BF16 (R2); `src/gpu_bf16.py` — M24.
-- `src/gpu3.py` (на основе `src/gpu2.py`) — M21/M22: кодек Q8_0 без базы (rANS с контекстами, предсказание строк по похожим строкам).
-- `src/seed.py` — семя: старший квант набора без BF16 и его кодек.
-- `src/qr.py` — QR: GPU-кодирование остатка вероятностями квантизатора (масштабы, затем коды), и тот же кодер без семени для одиночных файлов.
-- `src/requant.py` — CPU-квантизаторы через `ggmlq.dll`, загрузка imatrix (legacy `.dat` и GGUF).
+- `seedpack/cli.py` — CLI (`seedpack`, из исходников — `python varc.py`); `seedpack/container.py` — формат `.varc` (части + индекс в конце, произвольный доступ).
+- `seedpack/repo3.py` — ядро: M28/M29 (базы, предсказание квантов, остатки, конвейер).
+- `seedpack/gpuquant.py` — генерация CUDA-кода из `ggml-quants.c`, бит-в-бит с CPU; варианты квантизаторов старых версий llama.cpp.
+- `seedpack/ptxfix.py` — обход ошибки ptxas при делении на константу.
+- `seedpack/bf16v2.py` — кодек BF16 (R2); `seedpack/gpu_bf16.py` — M24.
+- `seedpack/gpu3.py` (на основе `seedpack/gpu2.py`) — M21/M22: кодек Q8_0 без базы (rANS с контекстами, предсказание строк по похожим строкам).
+- `seedpack/seed.py` — семя: старший квант набора без BF16 и его кодек.
+- `seedpack/qr.py` — QR: GPU-кодирование остатка вероятностями квантизатора (масштабы, затем коды), и тот же кодер без семени для одиночных файлов.
+- `seedpack/requant.py` — CPU-квантизаторы через `ggmlq.dll`, загрузка imatrix (legacy `.dat` и GGUF).
 - `bench*.py`, `results*.json` — замеры всех методов M1–M29; `research/` — исследования кодеков.
 - `bench_competitors/` — сравнение с другими архиваторами: `run_bench.py`, `quant_sets.py`, `vs_lmz.py`; `hf_bench.py` и `hf_card.py` — бенчмарк и карточка релиза Qwen3-0.6B на Hugging Face.
 - `assets/` — логотип (`logo.svg`) и баннер (`banner.png`, исходник `banner.html`).
-- `third_party/ggml/` — исходники квантизации llama.cpp (MIT, см. `LICENSE`).
+- `seedpack/ggml/` — исходники квантизации llama.cpp (MIT, см. `seedpack/ggml/LICENSE`).
 
 ## Ограничения
 
 - Нужна видеокарта NVIDIA.
 - Кванты без BF16-модели: семенем становится старший квант (больше всего бит на вес: UD-Q8_K_XL, Q8_0, … Q4); его тензоры деквантуются, остальные кванты выводятся из них. Если imatrix нет, квантизаторы запускаются с единичными весами или без весов — для каждого тензора выбирается вариант с меньшим остатком. Набор квантов Qwen3.5-2B без BF16 и imatrix (21 файл, 28 ГБ) сжимается до 17%; lmz — до 40%.
 - Если опубликованный imatrix отличается от того, которым квантовали (так в Qwen3.5), часть блоков предсказывается неточно. Корректность от этого не страдает, растёт только размер: для Qwen3.5-2B все кванты вместе стоят 33 МБ.
-- Проверено на Windows.
+- Проверено на Windows 10 и Ubuntu (WSL2) с RTX 5070; другие видеокарты — в плане (ROADMAP, п. 22).
+
+## Лицензия
+
+Apache-2.0 (`LICENSE`). Исходники квантизации llama.cpp / ggml в `seedpack/ggml/` — MIT, см. `NOTICE`.

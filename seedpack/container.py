@@ -73,9 +73,11 @@ class Writer:
 
 
 class Reader:
-    def __init__(self, path):
+    def __init__(self, path, fileobj=None, size=None):
+        """path: the archive file; or a name for messages plus an open seekable binary `fileobj`
+        of `size` bytes (e.g. a remote file)"""
         self.path = path
-        self.f = open(path, "rb")
+        self.f = fileobj if fileobj is not None else open(path, "rb")
         head = self.f.read(8)
         if head[:4] != MAGIC:
             raise FormatError(f"{path}: not a .varc archive")
@@ -88,7 +90,7 @@ class Reader:
         self.f.seek(off)
         idx = json.loads(zstandard.ZstdDecompressor().decompress(self.f.read(n)))
         self.chunks, self.meta = idx["chunks"], idx["meta"]
-        self.size = os.path.getsize(path)
+        self.size = size if size is not None else os.path.getsize(path)
         self.lock = threading.Lock()
 
     def get(self, name):

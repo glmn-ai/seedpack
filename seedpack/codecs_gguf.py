@@ -16,8 +16,8 @@ from collections import defaultdict
 import numpy as np
 import zstandard
 
-import rans
-from gguf_reader import GGUF, GGML_Q8_0
+from . import rans
+from .gguf_reader import GGUF, GGML_Q8_0
 
 XZ_EXE = "xz"
 
