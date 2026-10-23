@@ -63,7 +63,10 @@ def single_table():
     tools = sorted({k.split(" | ", 1)[1] for k in res if k.split(" | ")[0] in sets},
                    key=lambda t: sum(res.get(f"{s} | {t}", {}).get("archive", 1e12) / res[f"{s} | SeedPack"]["size"]
                                      for s in sets))
-    best = {s: min(v["archive"] for k, v in res.items() if k.startswith(s + " | ") and "archive" in v) for s in sets}
+    of = {s: [v for k, v in res.items() if k.startswith(s + " | ") and "archive" in v] for s in sets}
+    best = {s: min(v["archive"] for v in of[s]) for s in sets}
+    fast_c = {s: min(v["compress_s"] for v in of[s] if "compress_s" in v) for s in sets}
+    fast_d = {s: min(v["decompress_s"] for v in of[s] if "compress_s" in v) for s in sets}
     head = "| Compressor | " + " | ".join(f"{DATA[s]} ({size(res[f'{s} | SeedPack']['size'])})" for s in sets) + " |"
     t = [head, "|---|" + "---:|" * len(sets)]
     for tool in tools:
@@ -73,10 +76,12 @@ def single_table():
             if not r or "archive" not in r:
                 cells.append("n/a")
                 continue
-            p = f"{100 * r['archive'] / r['size']:.2f}%"
+            p = bold(f"{100 * r['archive'] / r['size']:.2f}%", r["archive"] == best[s])
             if "compress_s" in r:
-                p += f" · {r['size'] / r['compress_s'] / 1e6:,.0f} / {r['size'] / r['decompress_s'] / 1e6:,.0f} MB/s"
-            cells.append(bold(p, r["archive"] == best[s]))
+                c = bold(f"{r['size'] / r['compress_s'] / 1e6:,.0f}", r["compress_s"] == fast_c[s])
+                d = bold(f"{r['size'] / r['decompress_s'] / 1e6:,.0f}", r["decompress_s"] == fast_d[s])
+                p += f" · {c} / {d} MB/s"
+            cells.append(p)
         name = ("**SeedPack**" if tool == "SeedPack" else tool) + NOTES.get(tool, "")
         t.append(f"| {name} | " + " | ".join(cells) + " |")
     return t
