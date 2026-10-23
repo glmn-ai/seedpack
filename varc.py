@@ -33,6 +33,29 @@ def _hasher(algo):
     return lambda d: hashlib.sha256(d).hexdigest()
 
 
+def physical_ram():
+    try:
+        if os.name == "nt":
+            import ctypes
+
+            class MS(ctypes.Structure):
+                _fields_ = [("len", ctypes.c_ulong), ("load", ctypes.c_ulong), ("total", ctypes.c_ulonglong),
+                            ("avail", ctypes.c_ulonglong), ("pf", ctypes.c_ulonglong), ("apf", ctypes.c_ulonglong),
+                            ("virt", ctypes.c_ulonglong), ("avirt", ctypes.c_ulonglong), ("ext", ctypes.c_ulonglong)]
+            ms = MS(); ms.len = ctypes.sizeof(MS)
+            ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(ms))
+            return ms.total
+        return os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
+    except Exception:
+        return 16 << 30
+
+
+def cache_bytes(mb):
+    """--cache MB, or by default a fifth of the RAM (at most 6 GB): predictions of tensors that
+    repeat across files are kept until their last use (Qwen3.5-2B needs about 6 GB)"""
+    return mb << 20 if mb is not None else min(6 << 30, physical_ram() // 5)
+
+
 def default_algo():
     try:
         import blake3  # noqa: F401
@@ -84,8 +107,12 @@ def collect(inputs):
     return {n: ps[0] for n, ps in out.items()}
 
 
+_IMATRIX_OF = {}                          # path -> the imatrix file named in its metadata
+
+
 def gguf_role(path):
-    """'base' for a GGUF whose weights are mostly BF16, 'derived' for another GGUF, else None"""
+    """'base' for a GGUF whose weights are mostly BF16, 'derived' for another GGUF, else None.
+    Notes the imatrix file a quant was made with (quantize.imatrix.file) in _IMATRIX_OF."""
     from gguf_reader import GGUF, GGML_BF16
     with open(path, "rb") as f:
         if f.read(4) != b"GGUF":
@@ -103,6 +130,8 @@ def gguf_role(path):
             size *= 4
     total = sum(t.nbytes for t in g.tensors) or 1
     bf16 = sum(t.nbytes for t in g.tensors if t.type == GGML_BF16)
+    if g.meta.get("quantize.imatrix.file"):
+        _IMATRIX_OF[path] = str(g.meta["quantize.imatrix.file"])
     return "base" if bf16 / total >= 0.5 else "derived"
 
 
@@ -124,10 +153,14 @@ def cmd_pack(a):
     total = sum(os.path.getsize(p) for p in files.values())
     print(f"{len(files)} files, {human(total)}: {len(bases)} BF16 base(s), {len(derived)} derived GGUF(s), "
           f"{len(extras)} other file(s)")
+    want_im = sorted({os.path.basename(_IMATRIX_OF[p].replace("\\", "/")) for p in derived.values() if p in _IMATRIX_OF})
+    if want_im and not any("imatrix" in n.lower() for n in extras):
+        print(f"  note: the quants were made with an importance matrix ({', '.join(want_im[:3])}); adding that file "
+              "to the inputs makes the archive about 15-20% smaller")
     if derived and not bases:
-        print("  note: no BF16 GGUF among the inputs - GGUFs are stored with zstd only "
-              "(include the BF16 model for the large gain)")
-    m = (M28RepoGPU if a.method == "m28" else M29RepoGPU)(level=a.level, cache_bytes=a.cache << 20)
+        print("  note: no BF16 GGUF among the inputs - the most precise quant is the seed the others are derived "
+              "from (with the BF16 model the archive is smaller still)")
+    m = (M28RepoGPU if a.method == "m28" else M29RepoGPU)(level=a.level, cache_bytes=cache_bytes(a.cache))
     m.verbose = not a.quiet
     algo = default_algo()
     digest = _hasher(algo)
@@ -153,7 +186,7 @@ def cmd_pack(a):
         catalog = []
         for n, p in files.items():
             catalog.append({"name": n, "size": os.path.getsize(p), "hash": hashes[n],
-                            "role": roles[n] or "file", "stored": m.sizes.get(n)})
+                            "role": "derived, M21" if n in m.q8_files else roles[n] or "file", "stored": m.sizes.get(n)})
         w.close({"tool": TOOL, "method": m.name, "created": time.strftime("%Y-%m-%dT%H:%M:%S"), "hash": algo,
                  "files": catalog, "total": total})
     except BaseException:
@@ -234,7 +267,7 @@ def _extract(a, outdir):
         if clash:
             fail(f"{len(clash)} file(s) already exist in {outdir}, e.g. {clash[0]} (use --force to overwrite)")
     cls = M28RepoGPU if meta["method"].startswith("M28") else M29RepoGPU
-    m = cls(cache_bytes=a.cache << 20)
+    m = cls(cache_bytes=cache_bytes(a.cache))
     out = Output(meta["files"], meta["hash"], outdir)
     t0 = time.perf_counter()
     try:
@@ -283,8 +316,8 @@ def main(argv=None):
     s.add_argument("inputs", nargs="+", help="files or directories (directory contents keep their relative paths)")
     s.add_argument("-o", "--output", required=True, help="archive to create (.varc)")
     s.add_argument("--method", choices=["m29", "m28"], default="m29", help="m29 (default): BF16 v2 base codec; m28: M24 codec")
-    s.add_argument("--level", type=int, default=9, help="zstd level of the residuals (default 9)")
-    s.add_argument("--cache", type=int, default=2048, help="prediction cache in MB (default 2048)")
+    s.add_argument("--level", type=int, default=7, help="zstd level of the residuals (default 7; 9: about 1.5%% smaller, slower)")
+    s.add_argument("--cache", type=int, default=None, help="prediction cache in MB (default: a fifth of the RAM, at most 6144)")
     s.add_argument("-f", "--force", action="store_true", help="overwrite the archive")
     s.add_argument("-q", "--quiet", action="store_true", help="no per-file progress")
     s.set_defaults(fn=cmd_pack)
@@ -298,7 +331,7 @@ def main(argv=None):
             s.add_argument("-f", "--force", action="store_true", help="overwrite existing files")
         else:
             s.set_defaults(force=True)
-        s.add_argument("--cache", type=int, default=1024, help="prediction cache in MB (default 1024)")
+        s.add_argument("--cache", type=int, default=None, help="prediction cache in MB (default: a fifth of the RAM, at most 6144)")
         s.set_defaults(fn=fn)
     s = sub.add_parser("list", aliases=["l"], help="list the files in an archive")
     s.add_argument("archive")

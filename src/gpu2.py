@@ -35,6 +35,7 @@ SEGA = 4096            # blocks per thread, phase A
 SEGB = 1024            # blocks per thread, phase B
 NBIN = 64
 HEADER_CHUNKS = 4
+STAT_ELEMS = 32 << 20  # weights per slice in the per-column statistics
 
 KERNELS = r"""
 #define PB 12
@@ -302,6 +303,15 @@ def rest_of(data, layout):
     return b"".join(parts)
 
 
+def fill_rest(out, rest, layout):
+    """the bytes around the Q8_0 tensors (rest_of) back into the file buffer"""
+    pos_ = rpos = 0
+    for o, nbytes, _, _ in layout["t"]:
+        gap = o - pos_
+        out[pos_:o] = np.frombuffer(rest, np.uint8, gap, rpos); rpos += gap; pos_ = o + nbytes
+    out[pos_:] = np.frombuffer(rest, np.uint8, len(rest) - rpos, rpos)
+
+
 def xz_chunks_c(buf):
     n = len(buf)
     parts = [buf[i * n // HEADER_CHUNKS:(i + 1) * n // HEADER_CHUNKS] for i in range(HEADER_CHUNKS)]
@@ -326,7 +336,7 @@ def _items(buf, start):
     pos, out = start + 12, []
     for _ in range(n):
         (ln,) = struct.unpack_from("<Q", buf, pos)
-        out.append(buf[pos + 8:pos + 8 + ln]); pos += 8 + ln
+        out.append(bytes(buf[pos + 8:pos + 8 + ln])); pos += 8 + ln     # hashable for bytearray input
     return out, start + 12, pos
 
 
@@ -489,6 +499,12 @@ def load_tables(buf):
     return freq, used
 
 
+def _trim():
+    """return CuPy's cached free blocks: the pool otherwise keeps every temporary of a large
+    tensor, outgrows the GPU memory and WDDM pages it to system memory (10x slower kernels)"""
+    cp.get_default_memory_pool().free_all_blocks()
+
+
 class Timer:
     def __init__(self):
         import time
@@ -552,15 +568,22 @@ class GPU2:
         return cp.concatenate(out)
 
     # ---------------------------------------------------------- compress
-    def compress(self, data):
+    def compress(self, data, tensors=None, header=True, parsed=None):
+        """tensors: indices of the Q8_0 tensors to code (default all; Q8Parts codes a file in parts);
+        header=False leaves the non-Q8_0 bytes out (the caller stores them); parsed: parse_layout's
+        (layout, gguf) when the caller has it"""
         ev = Timer()
         pool = ThreadPoolExecutor(1)
-        layout, g = parse_layout(data, with_gguf=True)
-        rest_job = pool.submit(self._header_c, data, g, layout)
-        dev = cp.asarray(np.frombuffer(data, np.uint8))
-        allb = cp.concatenate([dev[o:o + nb] for o, nb, _, _ in layout["t"]]).reshape(-1, 34)
-        del dev
-        n = allb.shape[0]
+        layout, g = parsed or parse_layout(data, with_gguf=True)
+        rest_job = pool.submit(self._header_c, data, g, layout) if header else None
+        if tensors is not None:
+            layout = dict(layout, t=[layout["t"][i] for i in tensors])
+        view = np.frombuffer(data, np.uint8)
+        n = sum(nb for _, nb, _, _ in layout["t"]) // 34
+        allb = cp.empty((n, 34), cp.uint8)            # only the coded tensors go to the GPU
+        f = 0
+        for o, nb, _, _ in layout["t"]:
+            allb[f:f + nb // 34] = cp.asarray(view[o:o + nb]).reshape(-1, 34); f += nb // 34
         ev("upload + gather")
 
         q = allb[:, 2:].view(cp.int8)
@@ -574,19 +597,25 @@ class GPU2:
         f = rb = 0
         for (o, nbytes, rowlen, grp) in layout["t"]:
             nb = nbytes // 34; nbr = rowlen // 32; nrows = nb // nbr
-            # block scale relative to its row mean, as a multiplicative factor
-            rel = cp.exp2((bits[f:f + nb].reshape(nrows, nbr) - row_m[rb:rb + nrows, None]).astype(cp.float32) / 1024)
-            w = q[f:f + nb].astype(cp.float32).reshape(nrows, nbr, 32) * rel[:, :, None]
-            w = w.reshape(nrows, rowlen)                                    # rows x columns
+            s1 = cp.zeros(rowlen, cp.float64); s2 = cp.zeros(rowlen, cp.float64)
+            step = max(1, STAT_ELEMS // rowlen)                             # rows per slice: bounded memory
+            for r0 in range(0, nrows, step):
+                r1 = min(r0 + step, nrows); b0, b1 = f + r0 * nbr, f + r1 * nbr
+                # block scale relative to its row mean, as a multiplicative factor
+                rel = cp.exp2((bits[b0:b1].reshape(r1 - r0, nbr) - row_m[rb + r0:rb + r1, None]).astype(cp.float32) / 1024)
+                w = (q[b0:b1].astype(cp.float32).reshape(r1 - r0, nbr, 32) * rel[:, :, None]).reshape(r1 - r0, rowlen)
+                s1 += w.sum(0); s2 += (w * w).sum(0)
+                del w, rel
             rb += nrows
-            ms = (w * w).mean(0)
+            ms = (s2 / nrows).astype(cp.float32)
             cf = cp.log2(cp.sqrt(ms) + 1e-6)
             ci = cp.clip(cp.rint(cf * 8), -32768, 32767).astype(cp.int16)
             cfi_l.append(ci)
-            bias = w.mean(0) / cp.sqrt(ms + 1e-12)
+            bias = (s1 / nrows).astype(cp.float32) / cp.sqrt(ms + 1e-12)
             scls_l.append(cp.clip(cp.floor(bias * 16) + 8, 0, 15).astype(cp.uint8))
             off.append(int(ci.astype(cp.float32).mean() * 128) - 32 * 128)
             f += nb
+            _trim()
         cfi = cp.concatenate(cfi_l); scls = cp.concatenate(scls_l)
         if not self.SIGN:
             scls = cp.zeros_like(scls)
@@ -632,6 +661,7 @@ class GPU2:
             stream = cp.empty(int(offs[-1]), cp.uint8)
             self.kern("gather")((nseg,), (256,), (out, np.uint64(cap), out_len, offs, np.int32(nseg), stream))
             del out
+            _trim()
             lens = out_len.get()
             assert lens.max() < 65536
             streams.append((stream.get().tobytes(), lens.astype(np.uint16)))
@@ -654,7 +684,8 @@ class GPU2:
         if self.SIGN:
             ch["scls"] = zstd_c(scls.get().tobytes())
         ch.update(extra)
-        ch["rest"] = rest_job.result()
+        if rest_job is not None:
+            ch["rest"] = rest_job.result()
         ev("pack (wait header)")
         self.timing["compress"] = ev.parts
         return pack(ch)
@@ -745,10 +776,12 @@ class GPU2:
         return skip, np.array(dups, np.int64).reshape(-1, 3)
 
     # ---------------------------------------------------------- decompress
-    def decompress(self, buf):
+    def decompress(self, buf, out=None):
+        """-> numpy uint8 buffer with the exact file bytes; with `out` (a part of Q8Parts) only the
+        part's tensors are written into it"""
         ev = Timer()
         ch = unpack(buf)
-        rest_job = ThreadPoolExecutor(1).submit(self._header_d, ch["rest"])
+        rest_job = ThreadPoolExecutor(1).submit(self._header_d, ch["rest"]) if "rest" in ch else None
         layout = json.loads(zstd_d(ch["layout"]))
         side = json.loads(zstd_d(ch["side"]))
         groups, meta, rf, rn = self._meta(layout, side["off"], side["qset"])
@@ -801,20 +834,17 @@ class GPU2:
             allb[cp.asarray(np.concatenate(dst))] = allb[cp.asarray(np.concatenate(src))]
         ev("decode")
 
-        out_d = cp.empty(layout["size"], cp.uint8)
+        if out is None:
+            out = np.empty(layout["size"], np.uint8)
         for (o, nbytes, _, _), f, nb in zip(layout["t"], meta["first"], meta["nblocks"]):
-            out_d[o:o + nbytes] = allb[f:f + nb].ravel()
-        out = cp.asnumpy(out_d)
-        ev("assemble + download")
-        rest = rest_job.result()
-        pos_ = rpos = 0
-        for o, nbytes, _, _ in layout["t"]:
-            gap = o - pos_
-            out[pos_:o] = np.frombuffer(rest, np.uint8, gap, rpos); rpos += gap; pos_ = o + nbytes
-        out[pos_:] = np.frombuffer(rest, np.uint8, len(rest) - rpos, rpos)
+            allb[f:f + nb].ravel().get(out=out[o:o + nbytes])
+        del allb
+        ev("download")
+        if rest_job is not None:
+            fill_rest(out, rest_job.result(), layout)
         ev("header")
         self.timing["decompress"] = ev.parts
-        return out          # numpy uint8 buffer with the exact file bytes
+        return out
 
 
 class M7Pred(GPU2):

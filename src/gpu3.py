@@ -19,8 +19,8 @@ import struct
 import cupy as cp
 import numpy as np
 
-from codecs_gguf import zstd_c, zstd_d
-from gpu2 import GPU2, normalize_gpu, cum_of, PB, store_tables, load_tables
+from codecs_gguf import pack, unpack, zstd_c, zstd_d
+from gpu2 import GPU2, normalize_gpu, cum_of, PB, store_tables, load_tables, _trim, parse_layout, fill_rest
 
 C_KERNELS = r"""
 #define PB 12
@@ -65,12 +65,8 @@ __device__ __forceinline__ int mx_ctx(const signed char* pr, int p) {
 }
 
 // deterministic row prediction (explicit IEEE ops, no FMA contraction)
-extern "C" __global__ void predict(const unsigned char* blocks, int first, int nbr, int C,
-                                   const int* rows, int nrw, const int* par, const float* coef, int K,
-                                   const float* mu, signed char* pint) {
-    long long idx = (long long)blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx >= (long long)nrw * C) return;
-    int r = rows[idx / C], j = (int)(idx %% C);
+__device__ __forceinline__ signed char pred1(const unsigned char* blocks, int first, int nbr, int r, int j,
+                                             const int* par, const float* coef, int K, const float* mu) {
     float acc = 0.0f;
     for (int k = 0; k < K; k++) {
         int p = par[(size_t)r * K + k];
@@ -87,7 +83,32 @@ extern "C" __global__ void predict(const unsigned char* blocks, int first, int n
         float t = rintf(__fdiv_rn(m, d));
         v = (int)fmaxf(-127.0f, fminf(127.0f, t));
     }
-    pint[(size_t)r * C + j] = (signed char)v;
+    return (signed char)v;
+}
+
+extern "C" __global__ void predict(const unsigned char* blocks, int first, int nbr, int C,
+                                   const int* rows, int nrw, const int* par, const float* coef, int K,
+                                   const float* mu, signed char* pint) {
+    long long idx = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= (long long)nrw * C) return;
+    int r = rows[idx / C], j = (int)(idx %% C);
+    pint[(size_t)r * C + j] = pred1(blocks, first, nbr, r, j, par, coef, K, mu);
+}
+
+// the rows of one wave of every predicted tensor at once (decoder); entry e = row ent_row[e]
+// of slot ent_slot[e], one thread per (entry, column < CMAX)
+extern "C" __global__ void predict_multi(const unsigned char* blocks, const int* ent_slot, const int* ent_row,
+                                         int nent, int CMAX, const int* s_first, const int* s_nbr,
+                                         const long long* s_rbase, const long long* s_pbase, const int* s_mubase,
+                                         const int* par, const float* coef, int K, const float* mu,
+                                         signed char* pint) {
+    long long idx = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= (long long)nent * CMAX) return;
+    int e = (int)(idx / CMAX), j = (int)(idx %% CMAX), s = ent_slot[e], r = ent_row[e];
+    int nbr = s_nbr[s], C = nbr * 32;
+    if (j >= C) return;
+    pint[s_pbase[s] + (size_t)r * C + j] = pred1(blocks, s_first[s], nbr, r, j, par + s_rbase[s] * K,
+                                                 coef + s_rbase[s] * K, K, mu + s_mubase[s]);
 }
 
 #define PUT(tab, s) {                                                                 \
@@ -207,6 +228,7 @@ extern "C" __global__ void dec_c(const unsigned char* in, const unsigned long lo
 """
 
 _cmods = {}
+PRED_MEM = 7          # GPU bytes per tensor byte while its rows are planned (f32 rows, fp16 copy, ...)
 
 
 def ckern(name, preda=False):
@@ -234,9 +256,13 @@ class GPU3(GPU2):
 
     # ---------------------------------------------------------- encoder side
     def _row_matrix(self, allb, f, nb, rowlen):
-        b = allb[f:f + nb]
-        d = h2f_cp(b[:, 0], b[:, 1])
-        return (b[:, 2:].view(cp.int8).astype(cp.float32) * d[:, None]).reshape(-1, rowlen)
+        W = cp.empty((nb * 32,), cp.float32)
+        step = 1 << 20                                                # blocks per slice
+        for a in range(0, nb, step):
+            b = allb[f + a:f + min(a + step, nb)]
+            d = h2f_cp(b[:, 0], b[:, 1])
+            W[a * 32:(a + len(b)) * 32] = (b[:, 2:].view(cp.int8).astype(cp.float32) * d[:, None]).ravel()
+        return W.reshape(-1, rowlen)
 
     def _quant_coef(self, coef):
         if self.COEF_BITS == 16:
@@ -249,10 +275,17 @@ class GPU3(GPU2):
         P, K, NC = self.WAVES, self.K, self.NCAND
         wave = (cp.arange(n) * P) // n
         wstart = cp.searchsorted(wave, wave, side="left").astype(cp.int32)       # first row of the row's wave
-        mu = W[valid].mean(0)
-        Wc = W - mu
-        nrm = cp.linalg.norm(Wc, axis=1, keepdims=True)
-        Wh = (Wc / cp.maximum(nrm, 1e-12)).astype(cp.float16)
+        vf = valid.astype(cp.float32)
+        mu = (vf @ W) / max(float(vf.sum()), 1.0)
+        col_w = cp.zeros(C, cp.float64)
+        for i in range(0, n, 8192):                                   # sum of squares in slices
+            col_w += (vf[i:i + 8192] @ (W[i:i + 8192] * W[i:i + 8192])).astype(cp.float64)
+        W -= mu                                                       # centred in place
+        Wc = W
+        Wh = cp.empty((n, C), cp.float16)
+        for i in range(0, n, 8192):
+            x = Wc[i:i + 8192]
+            Wh[i:i + 8192] = (x / cp.maximum(cp.linalg.norm(x, axis=1, keepdims=True), 1e-12)).astype(cp.float16)
         Wh[~valid] = 0
         cand = cp.full((n, NC), -1, cp.int32)
         CH = 1024
@@ -263,7 +296,7 @@ class GPU3(GPU2):
                 continue
             S = Wh[i:j] @ Wh[:int(wstart[j - 1])].T
             S = cp.where((cols[None, :S.shape[1]] < wstart[i:j, None]) & valid[None, :S.shape[1]], S, cp.float16(-2))
-            for k in range(NC):
+            for k in range(min(NC, K)):             # only the K best candidates become parents
                 m = cp.argmax(S, 1)
                 ok = S[rows, m] > -1
                 cand[i:j, k] = cp.where(ok, m, -1).astype(cp.int32)
@@ -272,7 +305,7 @@ class GPU3(GPU2):
         frac = cp.ones(n, cp.float32)
         coefs = cp.zeros((n, K), cp.float32)
         kuse = cp.zeros(n, cp.int32)
-        col_res = cp.zeros(C, cp.float64); col_w = cp.zeros(C, cp.float64)
+        col_res = cp.zeros(C, cp.float64)
         for i in range(0, n, 2048):
             j = min(i + 2048, n)
             y = Wc[i:j]; yy = cp.maximum((y * y).sum(1), 1e-12)
@@ -298,7 +331,7 @@ class GPU3(GPU2):
                 res_best = cp.where(better[:, None], res, res_best)
             frac[i:j] = best; kuse[i:j] = bestk; coefs[i:j] = bestc
             vr = valid[i:j, None]
-            col_res += cp.where(vr, res_best * res_best, 0).sum(0); col_w += cp.where(vr, W[i:j] * W[i:j], 0).sum(0)
+            col_res += cp.where(vr, res_best * res_best, 0).sum(0)
         valid_par = (cp.arange(K)[None, :] < kuse[:, None]) & valid[:, None]
         par = cp.where(valid_par, par, -1).astype(cp.int32)
         coefs = cp.where(valid_par, coefs, 0).astype(cp.float32)
@@ -323,29 +356,38 @@ class GPU3(GPU2):
             nrows = nb // nbr
             if nrows < 2 * self.WAVES:
                 continue
+            if PRED_MEM * nb * 34 > cp.cuda.runtime.memGetInfo()[0] + cp.get_default_memory_pool().free_bytes():
+                continue                      # its row matrix would not fit: coded without prediction
             W = self._row_matrix(allb, f, nb, rowlen)
             valid = skip[f:f + nb].reshape(nrows, nbr)[:, 0] == 0
             par, coefs, fbin, mu, cadj = self._plan_tensor(W, valid)
             del W
+            _trim()
             plans.append(dict(t=i, par=par, coefs=coefs, fbin=fbin, mu=mu, nrows=nrows, nbr=nbr, first=f, cadj=cadj))
         env["plans"] = plans
         for p in plans:
             sl = skip[p["first"]:p["first"] + p["nrows"] * p["nbr"]]
             sl[...] = cp.where(sl == 1, 1, 6 if self.PREDA else 2).astype(cp.uint8)
 
+    def _waves(self, n):
+        wave = (np.arange(n) * self.WAVES) // n
+        starts = np.searchsorted(wave, np.arange(self.WAVES))
+        return starts, np.append(starts[1:], n)
+
     def _segments(self, plans):
-        st, sr, sn, ss, wave_of = [], [], [], [], []
-        for slot, p in enumerate(plans):
-            n = p["nrows"]
-            wave = (np.arange(n) * self.WAVES) // n
-            starts = np.searchsorted(wave, np.arange(self.WAVES))
-            ends = np.append(starts[1:], n)
-            for w, (a, b) in enumerate(zip(starts, ends)):
+        """rANS segments ordered (wave, tensor): the decoder handles one wave of all tensors per
+        launch -> arrays + wave_start[w] (first segment of wave w, WAVES + 1 entries)"""
+        st, sr, sn, ss, wave_start = [], [], [], [], []
+        se = [self._waves(p["nrows"]) for p in plans]
+        for w in range(self.WAVES):
+            wave_start.append(len(st))
+            for slot, p in enumerate(plans):
+                a, b = se[slot][0][w], se[slot][1][w]
                 for r0 in range(a, b, self.RPT):
                     st.append(p["t"]); sr.append(r0); sn.append(min(self.RPT, b - r0)); ss.append(slot)
-                    wave_of.append((slot, w))
+        wave_start.append(len(st))
         return (np.array(st, np.int32), np.array(sr, np.int32), np.array(sn, np.int32),
-                np.array(ss, np.int32), wave_of)
+                np.array(ss, np.int32), wave_start)
 
     def _c_args(self, env, plans, segs, fbin_all, rbase, pint_all, pbase):
         st, sr, sn, ss, _ = segs
@@ -398,6 +440,7 @@ class GPU3(GPU2):
         self.kern("gather")((nseg,), (256,), (out, np.uint64(cap), out_len, offs, np.int32(nseg), dst))
         stream = dst.get().tobytes()
         del out, dst
+        _trim()
         side = {"tensors": [p["t"] for p in plans], "waves": self.WAVES, "K": self.K, "rpt": self.RPT}
         return {
             "C": stream,
@@ -468,24 +511,31 @@ class GPU3(GPU2):
         lens = np.frombuffer(zstd_d(ch["Clens"]), np.uint16).astype(np.uint64)
         offs = np.zeros(len(lens), np.uint64); offs[1:] = np.cumsum(lens)[:-1]
         stream = cp.asarray(np.frombuffer(ch["C"], np.uint8)); offs_g = cp.asarray(offs)
-        wave_of = segs[4]
-        # segments are ordered (slot, wave); decode wave by wave
-        bounds = {}
-        for s, key in enumerate(wave_of):
-            a, b = bounds.get(key, (s, s))
-            bounds[key] = (min(a, s), s + 1)
-        for slot, p in enumerate(plans):
-            n = p["nrows"]; C = p["nbr"] * 32
-            wave = (np.arange(n) * self.WAVES) // n
-            starts = np.searchsorted(wave, np.arange(self.WAVES)); ends = np.append(starts[1:], n)
-            pint_slot = pint_all[pbase[slot]:pbase[slot] + n * C]
-            for w in range(self.WAVES):
-                rows = cp.arange(starts[w], ends[w], dtype=cp.int32)
-                self._predict(env, p, rows, pint_slot)
-                a, b = bounds[(slot, w)]
-                ckern("dec_c", self.PREDA)((((b - a) + 63) // 64,), (64,),
-                               (stream, offs_g, np.int32(a), env["pos"]) + args[:6] + (np.int32(b),) + args[7:] +
-                               (remap, freq, cum, lut, env["allb"]))
+        wave_start = segs[4]
+        # prediction entries (slot, row) ordered by wave, like the segments
+        se = [self._waves(p["nrows"]) for p in plans]
+        es, er, ent_start = [], [], [0]
+        for w in range(self.WAVES):
+            for slot in range(len(plans)):
+                a, b = se[slot][0][w], se[slot][1][w]
+                es.append(np.full(b - a, slot, np.int32)); er.append(np.arange(a, b, dtype=np.int32))
+            ent_start.append(ent_start[-1] + sum(len(x) for x in er[-len(plans):]))
+        ent_slot, ent_row = cp.asarray(np.concatenate(es)), cp.asarray(np.concatenate(er))
+        CMAX = max(p["nbr"] for p in plans) * 32
+        mubase = np.cumsum([0] + [p["nbr"] * 32 for p in plans])[:-1].astype(np.int32)
+        pargs = (cp.asarray(np.array([p["first"] for p in plans], np.int32)),
+                 cp.asarray(np.array([p["nbr"] for p in plans], np.int32)),
+                 cp.asarray(rbase), cp.asarray(pbase), cp.asarray(mubase),
+                 cp.asarray(par_all), cp.asarray(coef_all), np.int32(K), cp.asarray(mu_all), pint_all)
+        for w in range(self.WAVES):
+            e0, e1 = ent_start[w], ent_start[w + 1]
+            ne = e1 - e0
+            ckern("predict_multi")(((ne * CMAX + 255) // 256,), (256,),
+                                   (env["allb"], ent_slot[e0:e1], ent_row[e0:e1], np.int32(ne), np.int32(CMAX)) + pargs)
+            a, b = wave_start[w], wave_start[w + 1]
+            ckern("dec_c", self.PREDA)((((b - a) + 63) // 64,), (64,),
+                                       (stream, offs_g, np.int32(a), env["pos"]) + args[:6] + (np.int32(b),) + args[7:] +
+                                       (remap, freq, cum, lut, env["allb"]))
         self.WAVES, self.K, self.RPT = saved
 
 
@@ -523,4 +573,67 @@ class M21ColRes(M20TokPairs):
     PRED_TENSORS = ("token_embd", "attn_q", "attn_k")
 
 
-METHODS3 = [M17RowPred(), M18Compact(), M19PredMax(), M20TokPairs(), M21ColRes()]
+class M22Fast(M21ColRes):
+    name = "M22 = M21 with row prediction for token_embd only, 128 waves (3.7x faster decoding, +0.03%)"
+    PRED_TENSORS = ("token_embd",)
+    WAVES = 128
+
+
+METHODS3 = [M17RowPred(), M18Compact(), M19PredMax(), M20TokPairs(), M21ColRes(), M22Fast()]
+
+
+class Q8Parts:
+    """M21 over a file in parts of whole Q8_0 tensors, so GPU memory is bounded by the part size
+    (budget bytes; default: a sixth of the free GPU memory) instead of the file size. Each part is
+    an independent M21 stream with its own tables; the bytes around the tensors are stored once."""
+    MEM = 6              # peak GPU bytes per part byte (blocks + encoder output buffers + streams)
+
+    def __init__(self, budget=None):
+        self.c = M22Fast()
+        self.budget = budget
+        self.parts = 0
+
+    def _budget(self):
+        if self.budget:
+            return self.budget
+        _trim()
+        return max(64 << 20, cp.cuda.runtime.memGetInfo()[0] // self.MEM)
+
+    def compress(self, data, with_rest=True):
+        """with_rest=False: only the Q8_0 tensors (the caller stores the other bytes)"""
+        from concurrent.futures import ThreadPoolExecutor
+        layout, g = parse_layout(data, with_gguf=True)
+        with ThreadPoolExecutor(1) as ex:
+            hdr = ex.submit(self.c._header_c, data, g, layout) if with_rest else None
+            budget, groups, cur, size = self._budget(), [], [], 0
+            for i, (_, nb, _, _) in enumerate(layout["t"]):
+                if cur and size + nb > budget:
+                    groups.append(cur); cur, size = [], 0
+                cur.append(i); size += nb
+            if cur:
+                groups.append(cur)
+            ch = {"layout": zstd_c(json.dumps(layout).encode())}
+            for k, idx in enumerate(groups):
+                ch[f"p{k}"] = self.c.compress(data, tensors=idx, header=False, parsed=(layout, g))
+                _trim()
+            if hdr is not None:
+                ch["rest"] = hdr.result()
+        self.parts = len(groups)
+        return pack(ch)
+
+    def decompress(self, buf, out=None):
+        """-> the file (numpy uint8); with `out`, the Q8_0 tensors are written into it"""
+        from concurrent.futures import ThreadPoolExecutor
+        ch = unpack(buf)
+        layout = json.loads(zstd_d(ch["layout"]))
+        if out is None:
+            out = np.empty(layout["size"], np.uint8)
+        with ThreadPoolExecutor(1) as ex:
+            rest = ex.submit(self.c._header_d, ch["rest"]) if "rest" in ch else None
+            k = 0
+            while f"p{k}" in ch:
+                self.c.decompress(ch[f"p{k}"], out=out)
+                _trim(); k += 1
+            if rest is not None:
+                fill_rest(out, rest.result(), layout)
+        return out

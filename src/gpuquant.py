@@ -14,6 +14,7 @@ import os
 import re
 
 import cupy as cp
+import cupyx
 import numpy as np
 
 from ptxfix import link_cubin, opaque_divisions, ptx_of
@@ -195,6 +196,14 @@ extern "C" __global__ void k_{fname}(const float * x, unsigned char * y, const l
     if (r >= nrows) return;
     {fname}(x + xoff[r], y + yoff[r], 1, npr[r], woff[r] < 0 ? NULL : w + woff[r]);
 }}""")
+    for fname, _, _ in QFUN.values():
+        t = fname[len("quantize_"):]
+        ks.append(f"""
+extern "C" __global__ void k_dq_{t}(const unsigned char * y, float * x, int nrows, int npr, int rb) {{
+    int r = blockIdx.x * blockDim.x + threadIdx.x;
+    if (r >= nrows) return;
+    dequantize_row_{t}((const block_{t} *)(y + (size_t)r * rb), x + (size_t)r * npr, npr);
+}}""")
     return "\n".join(ks)
 
 
@@ -218,11 +227,27 @@ _bf16_to_f32 = cp.ElementwiseKernel("uint16 a", "float32 y", "y = __uint_as_floa
 
 
 def _to_f32_into(a, out):
-    """weights (bf16 bits as uint16 / f16 / f32) -> float32, written into `out`"""
-    if a.dtype == cp.uint16:
+    """weights (bf16 bits as uint16 / f16 / f32, or an object with into(out)) -> float32, written
+    into `out`"""
+    if hasattr(a, "into"):
+        a.into(out)
+    elif a.dtype == cp.uint16:
         _bf16_to_f32(a, out)
     else:
         out[...] = a
+
+
+PINNED = [0]      # bytes of pinned host memory handed out since the pool was last emptied
+
+
+def to_host(a):
+    """device array -> numpy array in pinned memory (twice the bandwidth of a pageable copy).
+    The blocks return to CuPy's pinned pool and are reused; the caller empties the pool now and
+    then (repo3._release), since on Windows pinned blocks count against the commit charge."""
+    host = cupyx.empty_pinned(a.shape, a.dtype)
+    a.get(out=host)
+    PINNED[0] += a.nbytes
+    return host
 
 
 class GPUQuant:
@@ -311,7 +336,7 @@ class GPUQuant:
                 _to_f32_into(a, X[o:o + a.size]); xs.append(X[o:o + a.size].reshape(-1, npr)); o += a.size
             Y, spans = self._launch(ttype, xs, imatrices[i:j], variant, X)
             del X, xs
-            host = cp.asnumpy(Y)
+            host = to_host(Y)
             del Y
             for k, (a, b) in enumerate(spans):
                 if on_result:
@@ -321,6 +346,17 @@ class GPUQuant:
             del host
             i = j
         return None if on_result else out
+
+    def dequantize(self, ttype, y, npr, out=None):
+        """quantised bytes of a tensor (device uint8, rows of npr weights) -> float32 device array
+        (or into `out`), with llama.cpp's own dequantize_row_<type>"""
+        fname, qk, bs = QFUN[ttype]
+        rb = npr // qk * bs
+        nrows = y.size // rb
+        x = cp.empty(nrows * npr, cp.float32) if out is None else out
+        k = self.mod.get_function(f"k_dq_{fname[len('quantize_'):]}")
+        k(((nrows + 63) // 64,), (64,), (y, x, np.int32(nrows), np.int32(npr), np.int32(rb)))
+        return x
 
     def quantize_batch(self, ttype, xs, imatrices, variant=0):
         """quantise several tensors of one type in one launch (with quantiser `variant`, see VARIANTS).
@@ -342,10 +378,9 @@ class GPUQuant:
             rows_x.append(xo + np.arange(nr, dtype=np.int64) * npr)
             rows_y.append(yo + np.arange(nr, dtype=np.int64) * rb)
             rows_n.append(np.full(nr, npr, np.int32))
-            if imx is None:
-                rows_w.append(np.full(nr, -1, np.int64))
-            else:
-                rows_w.append(np.full(nr, wo, np.int64)); ws.append(np.asarray(imx, np.float32)); wo += npr
+            rows_w.append(np.full(nr, -1, np.int64) if imx is None else np.full(nr, wo, np.int64))
+            if imx is not None:
+                ws.append(np.asarray(imx, np.float32)); wo += npr
             outs.append((yo, nr * rb))
             xo += nr * npr; yo += nr * rb
         Y = cp.empty(yo, cp.uint8)

@@ -1,0 +1,128 @@
+{
+ "q4_k_m-0.6b | SeedPack": {
+  "archive": 372086436,
+  "compress_s": 5.861357200017665,
+  "decompress_s": 2.6796467000385746,
+  "lossless": true,
+  "size": 396705472
+ },
+ "q4_k_m-0.6b | lmz 1.3.0": {
+  "archive": 376920741,
+  "compress_s": 4.2155614999937825,
+  "decompress_s": 1.0121635000105016,
+  "lossless": true,
+  "size": 396705472
+ },
+ "q4_k_m-0.6b | ZipNN 0.5.4": {
+  "archive": 393737502,
+  "compress_s": 0.3665382000000008,
+  "decompress_s": 0.04504149999999996,
+  "lossless": true,
+  "note": "in memory (I/O excluded), WSL",
+  "size": 396705472
+ },
+ "q4_k_m-0.6b | zstd 1.5.7 -19 --long=30": {
+  "archive": 384782126,
+  "compress_s": 82.29068609996466,
+  "decompress_s": 0.7620382000459358,
+  "lossless": true,
+  "size": 396705472
+ },
+ "q4_k_m-0.6b | zstd 1.5.7 -3 --long=30": {
+  "archive": 385925222,
+  "compress_s": 1.352870799950324,
+  "decompress_s": 0.5280222999863327,
+  "lossless": true,
+  "size": 396705472
+ },
+ "q4_k_m-0.6b | 7-Zip 23.01 -mx9 (LZMA2)": {
+  "archive": 386032790,
+  "compress_s": 48.90597359999083,
+  "decompress_s": 3.500231599959079,
+  "lossless": true,
+  "size": 396705472
+ },
+ "q4_k_m-0.6b | xz 5.4.1 -6": {
+  "archive": 386276028,
+  "compress_s": 19.877668900007848,
+  "decompress_s": 4.662137300008908,
+  "lossless": true,
+  "size": 396705472
+ },
+ "q4_k_m-0.6b | bzip2 -9": {
+  "archive": 390223247,
+  "compress_s": 9.427400799992029,
+  "decompress_s": 5.212271699972916,
+  "lossless": true,
+  "size": 396705472
+ },
+ "q4_k_m-0.6b | gzip -9": {
+  "archive": 385970071,
+  "compress_s": 4.346933699969668,
+  "decompress_s": 0.550941800000146,
+  "lossless": true,
+  "size": 396705472
+ },
+ "q4_k_m-0.6b | lz4 1.9.4 -9 (HC)": {
+  "archive": 390886860,
+  "compress_s": 3.156937599997036,
+  "decompress_s": 0.34656959999119863,
+  "lossless": true,
+  "size": 396705472
+ },
+ "q4_k_m-0.6b | HF Xet (estimate)": {
+  "archive": 392017109,
+  "note": "size estimate (CDC dedup + lz4 / bg4+lz4)",
+  "size": 396705472
+ },
+ "hf-0.6b | SeedPack": {
+  "archive": 781678531,
+  "compress_s": 17.714877200021874,
+  "decompress_s": 11.123135900008492,
+  "lossless": true,
+  "size": 10949326160
+ },
+ "hf-0.6b | lmz 1.3.0": {
+  "archive": 4540213190,
+  "compress_s": 38.26848410000093,
+  "decompress_s": 6.130012400040869,
+  "lossless": true,
+  "size": 10949326160
+ },
+ "hf-0.6b | ZipNN 0.5.4": {
+  "archive": 10329186097,
+  "compress_s": 10.691238465999994,
+  "decompress_s": 1.5965640740000122,
+  "lossless": true,
+  "note": "in memory (I/O excluded), WSL",
+  "size": 10949326160
+ },
+ "hf-0.6b | zstd 1.5.7 -19 --long=30": {
+  "archive": 6568354578,
+  "compress_s": 576.3068053000025,
+  "decompress_s": 17.673313300008886,
+  "lossless": true,
+  "size": 10949326160
+ },
+ "hf-0.6b | zstd 1.5.7 -3 --long=30": {
+  "archive": 6608749262,
+  "compress_s": 15.31567310000537,
+  "decompress_s": 13.411956499970984,
+  "lossless": true,
+  "size": 10949326160
+ },
+ "hf-0.6b | 7-Zip 23.01 -mx9 (LZMA2)": {
+  "archive": 10211060236,
+  "compress_s": 833.2651639000396,
+  "decompress_s": 31.544019099965226,
+  "lossless": true,
+  "size": 10949326160
+ },
+ "hf-0.6b | xz 5.4.1 -6": {
+  "archive": 10222794892,
+  "compress_s": 465.8868482999969,
+  "decompress_s": 100.6638796000043,
+  "lossless": true,
+  "size": 10949326160
+ }
+}

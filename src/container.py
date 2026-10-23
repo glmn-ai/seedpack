@@ -13,6 +13,8 @@ import os
 import struct
 import threading
 import zlib
+from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 
 import zstandard
 
@@ -35,14 +37,25 @@ class Writer:
         self.f = open(path + ".part", "wb")
         self.f.write(MAGIC + struct.pack("<I", VERSION))
         self.chunks = {}
+        self.io = ThreadPoolExecutor(1)       # CRC + write in the background, in put() order
+        self.jobs = deque()
 
     def put(self, name, data):
         if name in self.chunks:
             raise ValueError(f"duplicate chunk {name}")
+        self.chunks[name] = None
+        self.jobs.append(self.io.submit(self._write, name, data))
+        while self.jobs and self.jobs[0].done():
+            self.jobs.popleft().result()          # raises a write error early
+
+    def _write(self, name, data):
         self.chunks[name] = [self.f.tell(), len(data), zlib.crc32(data)]
         self.f.write(data)
 
     def close(self, meta):
+        while self.jobs:
+            self.jobs.popleft().result()
+        self.io.shutdown()
         idx = zstandard.ZstdCompressor(level=19).compress(json.dumps({"chunks": self.chunks, "meta": meta}).encode())
         off = self.f.tell()
         self.f.write(idx)
@@ -51,6 +64,7 @@ class Writer:
         os.replace(self.path + ".part", self.path)
 
     def abort(self):
+        self.io.shutdown(cancel_futures=True)
         self.f.close()
         try:
             os.remove(self.path + ".part")

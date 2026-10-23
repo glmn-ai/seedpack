@@ -1,0 +1,31 @@
+<!doctype html>
+<!-- Source of banner.png: render with
+     chrome --headless=new --hide-scrollbars --force-device-scale-factor=2 --window-size=1280,320
+            --default-background-color=00000000 --screenshot=banner.png banner.html -->
+<html><head><meta charset="utf-8">
+<link href="https://fonts.googleapis.com/css2?family=Exo+2:ital,wght@0,500;1,800&display=block" rel="stylesheet">
+<style>
+  html, body { margin: 0; background: transparent; }
+  .b { box-sizing: border-box; width: 1280px; height: 320px; border-radius: 32px; background: #0E1311;
+       border: 3px solid #1F2722; display: flex; align-items: center; gap: 52px; padding: 0 72px;
+       position: relative; overflow: hidden; font-family: 'Exo 2', sans-serif; }
+  .b::before { content: ""; position: absolute; left: -120px; top: -180px; width: 640px; height: 640px;
+               background: radial-gradient(closest-side, rgba(110, 214, 80, .16), rgba(110, 214, 80, 0)); }
+  img { width: 196px; height: 196px; position: relative; }
+  .t { position: relative; }
+  h1 { margin: 0; font-size: 112px; line-height: 1; font-weight: 800; font-style: italic; color: #fff; letter-spacing: -1px; }
+  h1 b { font-weight: inherit; background: linear-gradient(90deg, #9BE34A, #29C074); -webkit-background-clip: text; color: transparent;
+         padding-right: 8px; }
+  p { margin: 20px 0 0; font-size: 30px; font-weight: 500; color: #A9B5AE; white-space: nowrap; }
+  p.by { margin-top: 10px; font-size: 23px; color: #6E7A73; letter-spacing: .5px; }
+</style></head>
+<body>
+<div class="b">
+  <img src="logo.svg" alt="">
+  <div class="t">
+    <h1>Seed<b>Pack</b></h1>
+    <p>Lossless GPU archiver for GGUF model repositories</p>
+    <p class="by">a NeuroSquad project</p>
+  </div>
+</div>
+</body></html>

@@ -1,0 +1,435 @@
+{
+ "q4_k_m-0.6b | zstd -3 --long=30": {
+  "compress_s": 2.0733138999785297,
+  "archive": 385925222,
+  "decompress_s": 1.2856147999991663,
+  "lossless": true,
+  "size": 396705472
+ },
+ "q4_k_m-0.6b | zstd -19": {
+  "compress_s": 13.836843099968974,
+  "archive": 384673480,
+  "decompress_s": 1.3911399999633431,
+  "lossless": true,
+  "size": 396705472
+ },
+ "q4_k_m-0.6b | xz -6": {
+  "archive": 386276028,
+  "compress_s": 22.66458619997138,
+  "decompress_s": 4.0900003999704495,
+  "lossless": true,
+  "size": 396705472
+ },
+ "q4_k_m-0.6b | ZipNN 0.5.4": {
+  "archive": 393737502,
+  "compress_s": 0.37816357200006223,
+  "decompress_s": 0.04980647299998964,
+  "lossless": true,
+  "note": "in memory (I/O excluded), WSL",
+  "size": 396705472
+ },
+ "bf16-0.6b | ZipNN 0.5.4": {
+  "archive": 797386654,
+  "compress_s": 1.0285220399999844,
+  "decompress_s": 0.18117561600001864,
+  "lossless": true,
+  "note": "in memory (I/O excluded), WSL",
+  "size": 1198182848
+ },
+ "bf16-0.6b | zstd -3 --long=30": {
+  "compress_s": 4.457286100019701,
+  "archive": 934649125,
+  "decompress_s": 5.1366642999928445,
+  "lossless": true,
+  "size": 1198182848
+ },
+ "bf16-0.6b | zstd -19": {
+  "compress_s": 54.44049750000704,
+  "archive": 902787518,
+  "decompress_s": 6.787474000011571,
+  "lossless": true,
+  "size": 1198182848
+ },
+ "bf16-0.6b | xz -6": {
+  "archive": 846003960,
+  "compress_s": 91.2833493000362,
+  "decompress_s": 17.427402000001166,
+  "lossless": true,
+  "size": 1198182848
+ },
+ "bf16-0.6b | DFloat11 (estimate)": {
+  "archive": 800449416,
+  "note": "size estimate (format model)",
+  "size": 1198182848
+ },
+ "bf16-2b | ZipNN 0.5.4": {
+  "archive": 2511165137,
+  "compress_s": 3.231801020999999,
+  "decompress_s": 0.5662288750000002,
+  "lossless": true,
+  "note": "in memory (I/O excluded), WSL",
+  "size": 3775709216
+ },
+ "bf16-2b | zstd -3 --long=30": {
+  "compress_s": 23.638881499995477,
+  "archive": 2945090074,
+  "decompress_s": 15.14554539998062,
+  "lossless": true,
+  "size": 3775709216
+ },
+ "bf16-2b | zstd -19": {
+  "compress_s": 159.7147540000151,
+  "archive": 2852587958,
+  "decompress_s": 19.10567960003391,
+  "lossless": true,
+  "size": 3775709216
+ },
+ "bf16-2b | xz -6": {
+  "archive": 2671197200,
+  "compress_s": 235.95859900000505,
+  "decompress_s": 113.60919379995903,
+  "lossless": true,
+  "size": 3775709216
+ },
+ "bf16-2b | DFloat11 (estimate)": {
+  "archive": 2516106689,
+  "note": "size estimate (format model)",
+  "size": 3775709216
+ },
+ "bf16-2b | HF Xet (estimate)": {
+  "archive": 3251503533,
+  "note": "size estimate (CDC dedup + lz4 / bg4+lz4)",
+  "size": 3775709216
+ },
+ "q8_0-0.6b | ZipNN 0.5.4": {
+  "archive": 636496469,
+  "compress_s": 0.6881496000000009,
+  "decompress_s": 0.0637332999999991,
+  "lossless": true,
+  "note": "in memory (I/O excluded), WSL",
+  "size": 639447744
+ },
+ "q8_0-0.6b | zstd -3 --long=30": {
+  "compress_s": 3.074424100050237,
+  "archive": 609081940,
+  "decompress_s": 2.251455499965232,
+  "lossless": true,
+  "size": 639447744
+ },
+ "q8_0-0.6b | zstd -19": {
+  "compress_s": 18.145068300014827,
+  "archive": 608542838,
+  "decompress_s": 2.1396051000338048,
+  "lossless": true,
+  "size": 639447744
+ },
+ "q8_0-0.6b | xz -6": {
+  "archive": 613647032,
+  "compress_s": 29.65747360000387,
+  "decompress_s": 6.7986877000075765,
+  "lossless": true,
+  "size": 639447744
+ },
+ "q8_0-0.6b | HF Xet (estimate)": {
+  "archive": 634587341,
+  "note": "size estimate (CDC dedup + lz4 / bg4+lz4)",
+  "size": 639447744
+ },
+ "repo-0.6b | ZipNN 0.5.4": {
+  "archive": 10329199096,
+  "compress_s": 9.699062339000044,
+  "decompress_s": 1.2737514209999619,
+  "lossless": true,
+  "note": "in memory (I/O excluded), WSL",
+  "size": 10949346377
+ },
+ "repo-0.6b | zstd -3 --long=30": {
+  "compress_s": 29.235248300014064,
+  "archive": 6608939929,
+  "size": 10949346377
+ },
+ "repo-0.6b | HF Xet (estimate)": {
+  "archive": 5110674115,
+  "note": "size estimate (CDC dedup + lz4 / bg4+lz4)",
+  "size": 10949346377
+ },
+ "repo-0.8b | ZipNN 0.5.4": {
+  "archive": 12801831254,
+  "compress_s": 12.70487364700005,
+  "decompress_s": 1.8151585259999745,
+  "lossless": true,
+  "note": "in memory (I/O excluded), WSL",
+  "size": 14077041094
+ },
+ "repo-0.8b | zstd -3 --long=30": {
+  "compress_s": 40.25493930000812,
+  "archive": 8700979100,
+  "size": 14077041094
+ },
+ "repo-0.8b | HF Xet (estimate)": {
+  "archive": 6680918572,
+  "note": "size estimate (CDC dedup + lz4 / bg4+lz4)",
+  "size": 14077041094
+ },
+ "repo-2b | ZipNN 0.5.4": {
+  "archive": 31392333621,
+  "compress_s": 32.985103389999956,
+  "decompress_s": 4.349174557,
+  "lossless": true,
+  "note": "in memory (I/O excluded), WSL",
+  "size": 34572767247
+ },
+ "repo-2b | zstd -3 --long=30": {
+  "compress_s": 107.19763360003708,
+  "archive": 29820870098,
+  "size": 34572767247
+ },
+ "repo-2b | HF Xet (estimate)": {
+  "archive": 17417088150,
+  "note": "size estimate (CDC dedup + lz4 / bg4+lz4)",
+  "size": 34572767247
+ },
+ "bf16-0.6b | HF Xet (estimate)": {
+  "archive": 1039538448,
+  "note": "size estimate (CDC dedup + lz4 / bg4+lz4)",
+  "size": 1198182848
+ },
+ "q4_k_m-0.6b | HF Xet (estimate)": {
+  "archive": 392017109,
+  "note": "size estimate (CDC dedup + lz4 / bg4+lz4)",
+  "size": 396705472
+ },
+ "bf16-0.6b | lmz 1.3.0": {
+  "archive": 790440766,
+  "compress_s": 1.571426100039389,
+  "decompress_s": 0.9717458999948576,
+  "lossless": true,
+  "size": 1198182848
+ },
+ "bf16-2b | lmz 1.3.0": {
+  "archive": 2487118917,
+  "compress_s": 4.129611299955286,
+  "decompress_s": 2.6658123999950476,
+  "lossless": true,
+  "size": 3775709216
+ },
+ "q8_0-0.6b | lmz 1.3.0": {
+  "archive": 594734905,
+  "compress_s": 1.736694900027942,
+  "decompress_s": 0.7481274000019766,
+  "lossless": true,
+  "size": 639447744
+ },
+ "q4_k_m-0.6b | lmz 1.3.0": {
+  "archive": 376920741,
+  "compress_s": 3.888572900032159,
+  "decompress_s": 0.9218933000229299,
+  "lossless": true,
+  "size": 396705472
+ },
+ "repo-0.6b | lmz 1.3.0": {
+  "archive": 4540220530,
+  "compress_s": 36.16092639998533,
+  "decompress_s": 5.156746000051498,
+  "lossless": true,
+  "size": 10949346377
+ },
+ "repo-0.8b | lmz 1.3.0": {
+  "archive": 5799729794,
+  "compress_s": 35.18195229995763,
+  "decompress_s": 6.218080599966925,
+  "lossless": true,
+  "size": 14077041094
+ },
+ "repo-2b | lmz 1.3.0": {
+  "archive": 15120555013,
+  "compress_s": 74.49377850000747,
+  "decompress_s": 16.989289099990856,
+  "lossless": true,
+  "size": 34572767247
+ },
+ "quants-0.6b | lmz 1.3.0": {
+  "archive": 3748970156,
+  "compress_s": 34.264930800010916,
+  "decompress_s": 4.266542800003663,
+  "lossless": true,
+  "size": 9749987520
+ },
+ "quants-0.6b | zstd -3 --long=30": {
+  "compress_s": 24.449267100018915,
+  "archive": 5671673568,
+  "size": 9749987520
+ },
+ "quants-0.8b | lmz 1.3.0": {
+  "archive": 4400846575,
+  "compress_s": 35.44906869996339,
+  "decompress_s": 4.659804499999154,
+  "lossless": true,
+  "size": 11744380160
+ },
+ "quants-0.8b | zstd -3 --long=30": {
+  "compress_s": 29.09671569999773,
+  "archive": 7030680572,
+  "size": 11744380160
+ },
+ "quants-2b | lmz 1.3.0": {
+  "archive": 11306273296,
+  "compress_s": 68.42895680002403,
+  "decompress_s": 11.254024100024253,
+  "lossless": true,
+  "size": 28129760512
+ },
+ "quants-2b | zstd -3 --long=30": {
+  "compress_s": 81.37074980000034,
+  "archive": 25236595981,
+  "size": 28129760512
+ },
+ "quants-le4-0.6b | lmz 1.3.0": {
+  "archive": 2267399588,
+  "compress_s": 25.029849599988665,
+  "decompress_s": 2.9880584999918938,
+  "lossless": true,
+  "size": 5461888704
+ },
+ "quants-le4-0.6b | zstd -3 --long=30": {
+  "compress_s": 15.131239600013942,
+  "archive": 2850183533,
+  "decompress_s": 14.467464400047902,
+  "lossless": true,
+  "size": 5461888704
+ },
+ "bf16-0.6b | Seedpack (varc)": {
+  "archive": 780618907,
+  "compress_s": 7.254082800005563,
+  "decompress_s": 3.560075599991251,
+  "lossless": true,
+  "size": 1198182848
+ },
+ "bf16-2b | Seedpack (varc)": {
+  "archive": 2463376868,
+  "compress_s": 17.712144599994645,
+  "decompress_s": 7.661258400010411,
+  "lossless": true,
+  "size": 3775709216
+ },
+ "q8_0-0.6b | Seedpack (varc)": {
+  "archive": 576353039,
+  "compress_s": 9.580866799980868,
+  "decompress_s": 3.7261637999909,
+  "lossless": true,
+  "size": 639447744
+ },
+ "q4_k_m-0.6b | Seedpack (varc)": {
+  "archive": 372086437,
+  "compress_s": 5.222942000022158,
+  "decompress_s": 2.4055864000110887,
+  "lossless": true,
+  "size": 396705472
+ },
+ "quants-0.6b | Seedpack (varc)": {
+  "archive": 933106291,
+  "compress_s": 21.80585239996435,
+  "decompress_s": 10.819107700022869,
+  "lossless": true,
+  "size": 9749987520
+ },
+ "quants-0.8b | Seedpack (varc)": {
+  "archive": 1103358175,
+  "compress_s": 24.131494000030216,
+  "decompress_s": 11.60965599998599,
+  "lossless": true,
+  "size": 11744380160
+ },
+ "quants-2b | Seedpack (varc)": {
+  "archive": 3022509468,
+  "compress_s": 59.90495340002235,
+  "decompress_s": 28.053736499976367,
+  "lossless": true,
+  "size": 28129760512
+ },
+ "quants-le4-0.6b | Seedpack (varc)": {
+  "archive": 870951350,
+  "compress_s": 16.89457639999455,
+  "decompress_s": 7.812735299987253,
+  "lossless": true,
+  "size": 5461888704
+ },
+ "quantsim-0.6b | Seedpack (varc)": {
+  "archive": 783921106,
+  "compress_s": 17.919349800038617,
+  "decompress_s": 10.619156899978407,
+  "lossless": true,
+  "size": 9751140900
+ },
+ "quantsim-0.6b | lmz 1.3.0": {
+  "archive": 3749770155,
+  "compress_s": 34.29900259996066,
+  "decompress_s": 4.251622999960091,
+  "lossless": true,
+  "size": 9751140900
+ },
+ "quantsim-0.6b | zstd -3 --long=30": {
+  "compress_s": 24.359469400020316,
+  "archive": 5672402395,
+  "size": 9751140900
+ },
+ "quantsim-0.8b | Seedpack (varc)": {
+  "archive": 995393557,
+  "compress_s": 21.264025999989826,
+  "decompress_s": 11.591349599999376,
+  "lossless": true,
+  "size": 11745514880
+ },
+ "quantsim-0.8b | lmz 1.3.0": {
+  "archive": 4401892737,
+  "compress_s": 32.9117548999493,
+  "decompress_s": 6.606766199984122,
+  "lossless": true,
+  "size": 11745514880
+ },
+ "quantsim-0.8b | zstd -3 --long=30": {
+  "compress_s": 29.313042900001165,
+  "archive": 7031349938,
+  "size": 11745514880
+ },
+ "quantsim-2b | Seedpack (varc)": {
+  "archive": 2548917205,
+  "compress_s": 51.38271400000667,
+  "decompress_s": 27.782434099994134,
+  "lossless": true,
+  "size": 28131706240
+ },
+ "quantsim-2b | lmz 1.3.0": {
+  "archive": 11307889544,
+  "compress_s": 64.40986630000407,
+  "decompress_s": 10.894699900003616,
+  "lossless": true,
+  "size": 28131706240
+ },
+ "quantsim-2b | zstd -3 --long=30": {
+  "compress_s": 82.17886899999576,
+  "archive": 25237655357,
+  "size": 28131706240
+ },
+ "repo-0.6b | Seedpack (varc)": {
+  "archive": 781687490,
+  "compress_s": 19.767449799983297,
+  "decompress_s": 9.943531700002495,
+  "lossless": true,
+  "size": 10949346377
+ },
+ "repo-0.8b | Seedpack (varc)": {
+  "archive": 1120528142,
+  "compress_s": 24.205659099970944,
+  "decompress_s": 12.189188799995463,
+  "lossless": true,
+  "size": 14077041094
+ },
+ "repo-2b | Seedpack (varc)": {
+  "archive": 2908543501,
+  "compress_s": 57.829665099969134,
+  "decompress_s": 30.496562099957373,
+  "lossless": true,
+  "size": 34572767247
+ }
+}
