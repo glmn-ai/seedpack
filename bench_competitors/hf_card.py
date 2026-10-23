@@ -21,6 +21,7 @@ opt = {a: float(sys.argv[i + 1]) for i, a in enumerate(sys.argv) if a in ("--ext
 out_dir = sys.argv[1]
 
 DATA = {"hf-0.6b": "This release, 30 files", "bf16-0.6b": "BF16", "q8_0-0.6b": "Q8_0", "q4_k_m-0.6b": "Q4_K_M"}
+NB = "\u00a0"                                # keeps "781.7 MB" on one line in narrow tables
 NOTES = {"ZipNN 0.5.4": "¹", "HF Xet (estimate)": "²", "DFloat11 (estimate)": "²"}
 
 
@@ -44,9 +45,9 @@ def full_table(ds):
     best_a = min(r["archive"] for _, r in rs)
     best_c = min(r["compress_s"] for r in measured)
     best_d = min(r["decompress_s"] for r in measured)
-    t = ["| | Compressor | Archive | Ratio | Compression | Decompression + check | Lossless |",
-         "|---:|---|---:|---:|---:|---:|:---:|"]
-    for i, (tool, r) in enumerate(rs, 1):
+    t = ["| Compressor | Archive | Ratio | Compression | Decompression + check | Lossless |",
+         "|---|---:|---:|---:|---:|:---:|"]
+    for tool, r in rs:
         a = r["archive"]
         name = ("**SeedPack**" if tool == "SeedPack" else tool) + NOTES.get(tool, "")
         c = d = "—"
@@ -54,7 +55,7 @@ def full_table(ds):
             c = bold(f"{r['compress_s']:.1f} s · {n / r['compress_s'] / 1e6:,.0f} MB/s", r["compress_s"] == best_c)
             d = bold(f"{r['decompress_s']:.1f} s · {n / r['decompress_s'] / 1e6:,.0f} MB/s", r["decompress_s"] == best_d)
         lossless = {True: "✓", False: "✗", None: "—"}[r.get("lossless")]
-        t.append(f"| {i} | {name} | {bold(size(a), a == best_a)} | {bold(f'{100 * a / n:.2f}%', a == best_a)} | {c} | {d} | {lossless} |")
+        t.append(f"| {name} | {bold(size(a).replace(' ', NB), a == best_a)} | {bold(f'{100 * a / n:.2f}%', a == best_a)} | {c} | {d} | {lossless} |")
     return t
 
 
