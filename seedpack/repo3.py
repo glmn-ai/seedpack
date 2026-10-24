@@ -1712,8 +1712,16 @@ class M28RepoGPU:
             _release()
             return win
 
+        fetched = {}                          # the coded windows read ahead (two: the drive never waits)
+
+        def fetch(w):
+            if w < len(wins) and w not in fetched:
+                fetched[w] = bread.submit(self._window_fetch, rt, order[wins[w][0]:wins[w][1]])
+
         def ahead(w):
-            return gpu.submit(prepare, w, bread.submit(self._window_fetch, rt, order[wins[w][0]:wins[w][1]]))
+            fetch(w)
+            fetch(w + 1)
+            return gpu.submit(prepare, w, fetched.pop(w))
 
         wb = [sum(self.by_name[n].nbytes for n in order[a:z]) for a, z in wins]
         limit = 2 * self._window_bytes()
