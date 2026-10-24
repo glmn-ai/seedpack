@@ -105,7 +105,7 @@ Publishing: `python -m build`, then `twine upload dist/*`.
 - `seedpack/requant.py` — CPU quantizers via `ggmlq.dll`, imatrix loading (legacy `.dat` and GGUF).
 - `bench*.py`, `results*.json` — measurements of all methods M1–M29; `research/` — codec research.
 - `bench_competitors/` — comparison with other archivers: `run_bench.py`, `quant_sets.py`, `vs_lmz.py`; `hf_bench.py` and `hf_card.py` — the benchmark and the card of the Qwen3-0.6B release on Hugging Face.
-- `assets/` — the logo (`logo.svg`) and the banner (`banner.png`, source `banner.html`).
+- `assets/` — the logo (`logo.svg`), the banner (`banner.png`, source `banner.html`) and the stats banners of the Hugging Face releases (`stats-*.png`); `bench_competitors/hf_banners.py` renders and compresses them.
 - `seedpack/ggml/` — llama.cpp quantization sources (MIT, see `seedpack/ggml/LICENSE`).
 
 ## Limitations

@@ -105,7 +105,7 @@ python -m seedpack --help         # то же, что команда seedpack
 - `seedpack/requant.py` — CPU-квантизаторы через `ggmlq.dll`, загрузка imatrix (legacy `.dat` и GGUF).
 - `bench*.py`, `results*.json` — замеры всех методов M1–M29; `research/` — исследования кодеков.
 - `bench_competitors/` — сравнение с другими архиваторами: `run_bench.py`, `quant_sets.py`, `vs_lmz.py`; `hf_bench.py` и `hf_card.py` — бенчмарк и карточка релиза Qwen3-0.6B на Hugging Face.
-- `assets/` — логотип (`logo.svg`) и баннер (`banner.png`, исходник `banner.html`).
+- `assets/` — логотип (`logo.svg`), баннер (`banner.png`, исходник `banner.html`) и баннеры со статистикой релизов на Hugging Face (`stats-*.png`); их рендерит и сжимает `bench_competitors/hf_banners.py`.
 - `seedpack/ggml/` — исходники квантизации llama.cpp (MIT, см. `seedpack/ggml/LICENSE`).
 
 ## Ограничения

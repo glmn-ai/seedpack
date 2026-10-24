@@ -2,7 +2,8 @@
 
 usage: hf_card.py OUT_DIR [--extract-one SECONDS] [--extract-all SECONDS]
 Writes OUT_DIR/README.md (SeedPack header + benchmark tables from results_hf06.json + the original
-unsloth/Qwen3-0.6B-GGUF card) and OUT_DIR/assets/seedpack-banner.png.
+unsloth/Qwen3-0.6B-GGUF card), OUT_DIR/assets/seedpack-banner.png and seedpack-stats.png (both made
+by hf_banners.py).
 """
 import json
 import os
@@ -132,6 +133,9 @@ tags:
 <p align="center">
   <a href="{GITHUB}"><img src="https://huggingface.co/{REPO}/resolve/main/assets/seedpack-banner.png" alt="SeedPack" width="860"></a>
 </p>
+<p align="center">
+  <img src="https://huggingface.co/{REPO}/resolve/main/assets/seedpack-stats.png" alt="Qwen3-0.6B: {len(files)} files, {size(n_in)}, in one {size(sp['archive'])} archive, {n_in / sp['archive']:.1f}× smaller" width="860">
+</p>
 
 # Qwen3-0.6B-SEEDPACK
 
@@ -250,5 +254,6 @@ Notes:
 os.makedirs(os.path.join(out_dir, "assets"), exist_ok=True)
 open(os.path.join(out_dir, "README.md"), "w", encoding="utf-8", newline="\n").write(header + orig_body)
 shutil.copyfile(os.path.join(ROOT, "assets", "banner.png"), os.path.join(out_dir, "assets", "seedpack-banner.png"))
+shutil.copyfile(os.path.join(ROOT, "assets", "stats-qwen3-0.6b.png"), os.path.join(out_dir, "assets", "seedpack-stats.png"))
 print(f"{out_dir}/README.md: archive {size(sp['archive'])} ({100 * sp['archive'] / n_in:.2f}%), quants {quant_cost / 1e6:.2f} MB, "
       f"runner-up {runner_name} {runner['archive'] / sp['archive']:.1f}x, seedpack {__version__}")

@@ -2,8 +2,8 @@
 
 usage: hf_card_9b.py ARCHIVE ORIGINAL_README OUT_DIR
 Writes OUT_DIR/README.md (SeedPack header, timings from results_hf9b.json, per-file sizes read from
-the archive, SHA-256 from hf9b_files.json, then the original unsloth/Qwen3.5-9B-GGUF card) and
-OUT_DIR/assets/seedpack-banner.png.
+the archive, SHA-256 from hf9b_files.json, then the original unsloth/Qwen3.5-9B-GGUF card),
+OUT_DIR/assets/seedpack-banner.png and seedpack-stats.png (both made by hf_banners.py).
 """
 import json
 import os
@@ -77,6 +77,9 @@ tags:
 
 <p align="center">
   <a href="{GITHUB}"><img src="https://huggingface.co/{REPO}/resolve/main/assets/seedpack-banner.png" alt="SeedPack" width="860"></a>
+</p>
+<p align="center">
+  <img src="https://huggingface.co/{REPO}/resolve/main/assets/seedpack-stats.png" alt="Qwen3.5-9B: {len(files)} files, {size(n_in)}, in one {size(n_out)} archive, {n_in / n_out:.1f}× smaller" width="860">
 </p>
 
 # Qwen3.5-9B-SEEDPACK
@@ -179,5 +182,6 @@ The archive was made with SeedPack {meta['tool'].split()[-1]}.
 os.makedirs(os.path.join(out_dir, "assets"), exist_ok=True)
 open(os.path.join(out_dir, "README.md"), "w", encoding="utf-8", newline="\n").write(header + orig_body)
 shutil.copyfile(os.path.join(ROOT, "assets", "banner.png"), os.path.join(out_dir, "assets", "seedpack-banner.png"))
+shutil.copyfile(os.path.join(ROOT, "assets", "stats-qwen3.5-9b.png"), os.path.join(out_dir, "assets", "seedpack-stats.png"))
 print(f"{out_dir}/README.md: archive {size(n_out)} ({100 * n_out / n_in:.2f}%), quants {size(quant_cost)}, "
       f"base {size(base)}, {meta['tool']}")
