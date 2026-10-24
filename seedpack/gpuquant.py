@@ -342,13 +342,38 @@ class GPUQuant:
         self._keep.append(d)
         return d.data.ptr
 
-    def quantize_tensors(self, ttype, srcs, imatrices, variant=0, max_weights=1 << 28, on_result=None):
+    def quantize_tensors(self, ttype, srcs, imatrices, variant=0, max_weights=1 << 28, on_result=None, device=False):
         """srcs: list of (device array of the weights as bf16 (uint16) / f16 / f32, n_per_row).
         Converts to float32 on the GPU in launches of at most `max_weights` weights;
-        returns the quantised bytes of every tensor as host numpy arrays, or, with on_result,
-        calls on_result(index, bytes) per tensor as each launch completes and returns nothing."""
+        returns the quantised bytes of every tensor as host numpy arrays (device arrays with
+        `device`), or, with on_result, calls on_result(index, bytes) per tensor as each launch
+        completes and returns nothing."""
         out, i = [], 0
         while i < len(srcs):
+            a, npr = srcs[i]
+            if a.size > max_weights and not hasattr(a, "into"):
+                # a tensor bigger than a launch (an output / embedding matrix): its rows in several
+                # launches (rows are quantised independently), into one output buffer
+                _, qk, bs = QFUN[ttype]
+                nrow, rb = a.size // npr, npr // qk * bs
+                dst = cp.empty(nrow * rb, cp.uint8) if device else np.empty(nrow * rb, np.uint8)
+                step = max(1, max_weights // npr)
+                for r0 in range(0, nrow, step):
+                    r1 = min(nrow, r0 + step)
+                    X = cp.empty((r1 - r0) * npr, cp.float32)
+                    _to_f32_into(a[r0 * npr:r1 * npr], X)
+                    Y, _ = self._launch(ttype, [X.reshape(-1, npr)], imatrices[i:i + 1], variant, X)
+                    if device:
+                        dst[r0 * rb:r1 * rb] = Y
+                    else:
+                        Y.get(out=dst[r0 * rb:r1 * rb])
+                    del X, Y
+                if on_result:
+                    on_result(i, dst)
+                else:
+                    out.append(dst)
+                i += 1
+                continue
             j, n = i, 0
             while j < len(srcs) and (j == i or n + srcs[j][0].size <= max_weights):
                 n += srcs[j][0].size; j += 1
@@ -359,7 +384,7 @@ class GPUQuant:
                 _to_f32_into(a, X[o:o + a.size]); xs.append(X[o:o + a.size].reshape(-1, npr)); o += a.size
             Y, spans = self._launch(ttype, xs, imatrices[i:j], variant, X)
             del X, xs
-            host = to_host(Y)
+            host = Y if device else to_host(Y)
             del Y
             for k, (a, b) in enumerate(spans):
                 if on_result:

@@ -582,6 +582,21 @@ def batches(T, sizes):
     return out
 
 
+def _gather(arrs):
+    """host or device uint8 arrays -> one device array, each copied straight into its place"""
+    if len(arrs) == 1 and isinstance(arrs[0], cp.ndarray):
+        return arrs[0]
+    out = cp.empty(sum(len(a) for a in arrs), cp.uint8)
+    o = 0
+    for a in arrs:
+        if isinstance(a, cp.ndarray):
+            out[o:o + len(a)] = a
+        else:
+            out[o:o + len(a)].set(np.ascontiguousarray(a))
+        o += len(a)
+    return out
+
+
 def encode(T, items, seed_dev):
     """items: [(file tensor bytes, predicted bytes, seed byte offset, seed type)] of one batch
     (all of type T; host or device uint8 arrays) -> bytes"""
@@ -591,8 +606,8 @@ def encode(T, items, seed_dev):
     tm["seed_off"] = [it[2] for it in items]
     tm["seed_type"] = [it[3] for it in items]
     tm["cols"] = [it[4] if len(it) > 4 else 0 for it in items]
-    F = cp.concatenate([h2d(it[0]) for it in items])
-    P = cp.concatenate([h2d(it[1]) for it in items])
+    F = _gather([it[0] for it in items])
+    P = _gather([it[1] for it in items])
     tm_g, sg_g = cp.asarray(tm.view(np.uint8)), cp.asarray(sg.view(np.uint8))
     nseg = len(sg)
     counts = cp.zeros((NTAB, 256), cp.uint32)
@@ -633,7 +648,7 @@ def decode(T, buf, items, seed_dev):
     tm["seed_off"] = [it[1] for it in items]
     tm["seed_type"] = [it[2] for it in items]
     tm["cols"] = [it[3] if len(it) > 3 else 0 for it in items]
-    P = cp.concatenate([h2d(it[0]) for it in items])
+    P = _gather([it[0] for it in items])
     F = cp.zeros(nb * bs, cp.uint8)
     nseg = len(sg)
     freq_h, used_h = load_tables(ch["t"])

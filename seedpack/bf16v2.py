@@ -15,6 +15,7 @@ import json, os, re, sys, struct
 from concurrent.futures import ThreadPoolExecutor
 
 import cupy as cp
+import cupyx
 import numpy as np
 
 
@@ -272,94 +273,150 @@ class BF16v2:
     def compress(self, data):
         return b"".join(self.compress_parts(data))
 
-    def compress_parts(self, data):
-        """compress() as pack_parts' list: the coded stream (most of the output) stays in pieces"""
+    def compress_parts(self, data, read=None):
+        """compress() as pack_parts' list: the coded stream (most of the output) stays in pieces.
+        read(a, b) -> bytes [a, b) of the file as a uint8 array: how the groups of tensors are
+        read (default: slices of `data`; for a file's mapping, explicit reads are much faster
+        than its page faults)"""
+        st = self._analyse(data, read)
+        streams, lens_all = [], []
+        for stream, lens in self._encode(st):
+            streams.append(stream); lens_all.append(lens)
+        meta, side, tables = self._small_parts(st)
+        ch = {"meta": meta, "side": side, "tables": tables,
+              "lens": zstd_c(np.concatenate(lens_all).astype(np.uint32).tobytes()),
+              "stream": streams, "rest": st["hdr_job"].result()}
+        st["ev"]("header")
+        self.timing["compress"] = st["ev"].parts
+        return pack_parts(ch)
+
+    def compress_stream(self, data, read=None):
+        """the base's archive chunk, pack({"r2": <compress_parts>}), produced piece by piece so
+        that the coded stream is never held whole (gigabytes for a big model). Yields
+        ("analysed", None) after the first pass over the file; ("head", bytes): the chunk's start,
+        its two lengths not known yet left zero; ("data", bytes) for the rest of the chunk in
+        order; last ("fix", bytes): the head with those lengths. The parts are laid out as meta,
+        side, tables, stream, lens, rest (unpack() finds them by name)"""
+        def part(name, n):
+            nb = name.encode()
+            return struct.pack("<H", len(nb)) + nb + struct.pack("<Q", n)
+
+        st = self._analyse(data, read)
+        yield "analysed", None
+        small = dict(zip(("meta", "side", "tables"), self._small_parts(st)))
+        inner = struct.pack("<I", 6) + b"".join(part(n, len(v)) + v for n, v in small.items())
+        outer = struct.pack("<I", 1) + part("r2", 0)
+        yield "head", outer + inner + part("stream", 0)
+        total, lens_all = 0, []
+        for stream, lens in self._encode(st):
+            yield "data", stream
+            total += len(stream); lens_all.append(lens)
+        lens = zstd_c(np.concatenate(lens_all).astype(np.uint32).tobytes())
+        rest = st["hdr_job"].result()
+        tail = part("lens", len(lens)) + lens + part("rest", len(rest)) + rest
+        yield "data", tail
+        inner_len = len(inner) + len(part("stream", 0)) + total + len(tail)
+        st["ev"]("header")
+        self.timing["compress"] = st["ev"].parts
+        yield "fix", struct.pack("<I", 1) + part("r2", inner_len) + inner + part("stream", total)
+
+    def _analyse(self, data, read):
+        """pass 1 over the file, a group of tensors at a time: statistics, duplicate rows, then the
+        group's histogram (its contexts depend only on its own statistics); the frequency tables
+        -> the coder's state"""
         ev = Timer()
         g = GGUF.from_bytes(data)
         layout = self._layout(g, len(data))
         hdr_job = ThreadPoolExecutor(1).submit(M24BF16GPU._header_c, data, g, layout)
         host = np.frombuffer(data, np.uint8)
+        fetch = read or (lambda a, b: host[a:b])
         groups = self._groups(layout)
         resident = sum(nb for _, nb, _, _ in layout["t"]) + 2 * self.group_bytes < self.budget
-        nt = len(layout["t"])
-        rfi_l, cfi_l, scl_l = [None] * nt, [None] * nt, [None] * nt
-        nrows_c, rowmaps, dup_pairs = {}, {}, {}
+        rb, cb, nrow, ncol = self._bases(layout)
+        rfi = cp.zeros(nrow, cp.int16); cfi = cp.zeros(ncol, cp.int16); scl = cp.zeros(ncol, cp.int8)
+        nrows_c, dup_pairs = {}, {}
         counts = cp.zeros((layout["nroles"] * TPT, 256), cp.uint32)
         devs, plans = {}, {}
-        rmap_all = []
+        rmap_all, nrm = [], 0
         ev("parse")
-        # pass 1: statistics, duplicate rows, histograms
+        span = lambda grp: (layout["t"][grp[0]][0], layout["t"][grp[-1]][0] + layout["t"][grp[-1]][1])
+        rd = ThreadPoolExecutor(1)                # the next group is read while this one is analysed
+        nxt = rd.submit(fetch, *span(groups[0])) if groups else None
         for gi, grp in enumerate(groups):
-            a, b = layout["t"][grp[0]][0], layout["t"][grp[-1]][0] + layout["t"][grp[-1]][1]
-            dev = h2d(host[a:b])
-            rmap_off = {}
+            a, b = span(grp)
+            hb = nxt.result()
+            if gi + 1 < len(groups):
+                nxt = rd.submit(fetch, *span(groups[gi + 1]))
+            dev = h2d(hb)
+            rmap_off, mine = {}, []
             for i in grp:
                 off, nb, rl, _ = layout["t"][i]
                 d = dev[off - a:off - a + nb]
-                rfi_l[i], cfi_l[i], scl_l[i] = self._stats(d, rl)
-                keep, pairs = self._dups(d, rl, host[off:off + nb].view(np.uint16)) if self.dedup else (None, [])
+                r_, c_, s_ = self._stats(d, rl)
+                rfi[rb[i]:rb[i] + len(r_)] = r_; cfi[cb[i]:cb[i] + rl] = c_; scl[cb[i]:cb[i] + rl] = s_
+                keep, pairs = self._dups(d, rl, hb[off - a:off - a + nb].view(np.uint16)) if self.dedup else (None, [])
                 nrows_c[i] = nb // 2 // rl if keep is None else len(keep)
                 if keep is not None:
-                    rmap_off[i] = sum(len(x) for x in rmap_all); rmap_all.append(keep)
+                    rmap_off[i] = nrm; nrm += len(keep); rmap_all.append(keep); mine.append(keep)
                     dup_pairs[i] = pairs
-            rowmaps[gi] = rmap_off
             plans[gi] = self._plan(layout, gi, grp, nrows_c, rmap_off)
-            if gi == 0:
-                pass
-            devs[gi] = (dev, a) if resident else (None, a)
-        rfi = cp.concatenate(rfi_l); cfi = cp.concatenate(cfi_l); scl = cp.concatenate(scl_l)
-        rowmap = cp.asarray(np.concatenate(rmap_all)) if rmap_all else cp.zeros(1, cp.int32)
-        _trim()
-        ev("statistics + dedup")
-        for gi, grp in enumerate(groups):
-            dev, a = devs[gi]
-            if dev is None:
-                b = layout["t"][grp[-1]][0] + layout["t"][grp[-1]][1]; dev = h2d(host[a:b])
             tb, sg = plans[gi]
+            if mine:                              # the group's row maps, as a group-local array
+                tb = tb.copy(); m = tb["rmap"] >= 0; tb["rmap"][m] -= min(rmap_off.values())
+                rm = cp.asarray(np.concatenate(mine))
+            else:
+                rm = cp.zeros(1, cp.int32)
             kern("v2_hist")(((len(sg) + 63) // 64,), (64,),
                             (dev, cp.asarray(tb.view(np.uint8)), cp.asarray(sg.view(np.uint8)), np.int32(len(sg)),
-                             rfi, cfi, scl, rowmap, counts))
+                             rfi, cfi, scl, rm, counts))
+            devs[gi] = (dev, a) if resident else (None, a)
+            del hb, dev
+        rd.shutdown()
+        rowmap = cp.asarray(np.concatenate(rmap_all)) if rmap_all else cp.zeros(1, cp.int32)
         _trim()
-        ev("histogram")
+        ev("statistics + dedup + histogram")
         self.last_counts = counts.get()
         freq, used = normalize_gpu(counts, 1 << PB)
         remap = cp.full(counts.shape[0], -1, cp.int32); remap[used] = cp.arange(len(used), dtype=cp.int32)
-        cum = cum_of(freq)
-        streams, lens_all = [], []
-        cap = SEG * 2 + 1024
-        for gi, grp in enumerate(groups):
-            dev, a = devs[gi]
+        return dict(ev=ev, layout=layout, hdr_job=hdr_job, fetch=fetch, groups=groups, devs=devs, plans=plans,
+                    rfi=rfi, cfi=cfi, scl=scl, rowmap=rowmap, nrows_c=nrows_c, dup_pairs=dup_pairs,
+                    freq=freq, used=used, remap=remap, cum=cum_of(freq))
+
+    def _encode(self, st):
+        """pass 2: each group coded -> (its stream, its segments' lengths), in order"""
+        layout, cap = st["layout"], SEG * 2 + 1024
+        for gi, grp in enumerate(st["groups"]):
+            dev, a = st["devs"][gi]
             if dev is None:
-                b = layout["t"][grp[-1]][0] + layout["t"][grp[-1]][1]; dev = h2d(host[a:b])
-            tb, sg = plans[gi]
+                b = layout["t"][grp[-1]][0] + layout["t"][grp[-1]][1]; dev = h2d(st["fetch"](a, b))
+            tb, sg = st["plans"][gi]
             out = cp.empty(len(sg) * cap, cp.uint8); out_len = cp.zeros(len(sg), cp.uint32)
             kern("v2_enc")(((len(sg) + 63) // 64,), (64,),
                            (dev, cp.asarray(tb.view(np.uint8)), cp.asarray(sg.view(np.uint8)), np.int32(len(sg)),
-                            rfi, cfi, scl, rowmap, remap, freq, cum, out, np.uint64(cap), out_len))
+                            st["rfi"], st["cfi"], st["scl"], st["rowmap"], st["remap"], st["freq"], st["cum"],
+                            out, np.uint64(cap), out_len))
             lens = out_len.get()
             if (lens == 0xffffffff).any():
                 raise RuntimeError("rANS segment overflow")
             offs = cp.zeros(len(sg) + 1, cp.uint64); offs[1:] = cp.cumsum(out_len.astype(cp.uint64))
             dst = cp.empty(int(offs[-1]), cp.uint8)
             _g2.kern("gather")((len(sg),), (256,), (out, np.uint64(cap), out_len, offs, np.int32(len(sg)), dst))
-            streams.append(dst.get()); lens_all.append(lens)
-            del out, dst
-            devs[gi] = None
+            stream = dst.get()
+            del out, dst, dev
+            st["devs"][gi] = None
+            if cp.get_default_memory_pool().free_bytes() > (1 << 30):
+                _trim()                           # (it may run beside other GPU work)
+            yield stream, lens
         _trim()
-        ev("encode")
-        dups = [[i, r, s] for i, ps in dup_pairs.items() for r, s in ps]
-        meta = dict(layout=layout, dups=dups, nrows_c=[nrows_c[i] for i in range(nt)])
-        ch = {
-            "meta": zstd_c(json.dumps(meta).encode()),
-            "side": zstd_c(rfi.get().tobytes() + cfi.get().tobytes() + scl.get().tobytes(), 19),
-            "tables": store_tables(freq, used),
-            "lens": zstd_c(np.concatenate(lens_all).astype(np.uint32).tobytes()),
-            "stream": streams,
-            "rest": hdr_job.result(),
-        }
-        ev("header")
-        self.timing["compress"] = ev.parts
-        return pack_parts(ch)
+        st["ev"]("encode")
+
+    def _small_parts(self, st):
+        """the meta, side and tables parts (known after pass 1)"""
+        dups = [[i, r, s] for i, ps in st["dup_pairs"].items() for r, s in ps]
+        meta = dict(layout=st["layout"], dups=dups, nrows_c=[st["nrows_c"][i] for i in range(len(st["layout"]["t"]))])
+        return (zstd_c(json.dumps(meta).encode()),
+                zstd_c(st["rfi"].get().tobytes() + st["cfi"].get().tobytes() + st["scl"].get().tobytes(), 19),
+                store_tables(st["freq"], st["used"]))
 
     # ---------------------------------------------------------------- decompression
     def decompress(self, buf, alloc=None):
@@ -427,3 +484,134 @@ class BF16v2:
         ev("header")
         self.timing["decompress"] = ev.parts
         return out
+
+
+class R2Tensors:
+    """random access to an R2-coded file, for a model too big to be decoded whole: any of its 2-D
+    BF16 tensors is decoded on the GPU alone (its rANS segments are found from the segment
+    lengths), the other bytes (header, 1-D tensors, ...) come from the "rest" part.
+    part(name) -> bytes of one of the small parts; read(offset, n, out) reads n bytes of the coded
+    stream (offset from its start) into the writable buffer `out`."""
+
+    def __init__(self, part, read):
+        self.read = read
+        rest_job = ThreadPoolExecutor(1).submit(lambda: M24BF16GPU._header_d(part("rest")))
+        meta = json.loads(zstd_d(part("meta")))
+        self.layout = layout = meta["layout"]
+        self.size = layout["size"]
+        t = layout["t"]
+        self.rb, self.cb, nrow, ncol = BF16v2._bases(layout)
+        side = zstd_d(part("side"))
+        self.rfi = cp.asarray(np.frombuffer(side, np.int16, nrow, 0))
+        self.cfi = cp.asarray(np.frombuffer(side, np.int16, ncol, 2 * nrow))
+        self.scl = cp.asarray(np.frombuffer(side, np.int8, ncol, 2 * nrow + 2 * ncol))
+        freq_h, used_h = load_tables(part("tables"))
+        self.freq = cp.asarray(freq_h); self.cum = cum_of(self.freq)
+        self.lut = cp.empty((len(freq_h), 1 << PB), cp.uint8)
+        kern("build_lut")((len(freq_h),), (256,), (self.cum, np.int32(len(freq_h)), self.lut))
+        self.remap = cp.full(layout["nroles"] * TPT, -1, cp.int32)
+        self.remap[cp.asarray(used_h)] = cp.arange(len(used_h), dtype=cp.int32)
+        lens = np.frombuffer(zstd_d(part("lens")), np.uint32)
+        self.nrows_c = meta["nrows_c"]
+        nseg = [-(-self.nrows_c[i] * rl // SEG) for i, (_, _, rl, _) in enumerate(t)]
+        self.seg0 = np.zeros(len(t) + 1, np.int64); self.seg0[1:] = np.cumsum(nseg)
+        if self.seg0[-1] != len(lens):
+            raise ValueError("R2: segment lengths do not match the layout")
+        self.soff = np.zeros(len(lens) + 1, np.uint64); self.soff[1:] = np.cumsum(lens, dtype=np.uint64)
+        self.dups = {}
+        for i, r, s in meta["dups"]:
+            self.dups.setdefault(i, []).append((r, s))
+        rmap_all, self.rmap_off = [], {}           # row maps: the encoder's construction order
+        for i in range(len(t)):
+            if i in self.dups:
+                rl = t[i][2]; nr = t[i][1] // 2 // rl
+                isdup = np.zeros(nr, bool); isdup[[r for r, _ in self.dups[i]]] = True
+                self.rmap_off[i] = sum(len(x) for x in rmap_all); rmap_all.append(np.flatnonzero(~isdup).astype(np.int32))
+        self.rowmap = cp.asarray(np.concatenate(rmap_all)) if rmap_all else cp.zeros(1, cp.int32)
+        self.t_off = np.array([x[0] for x in t], np.int64)
+        self.before = np.zeros(len(t) + 1, np.int64); self.before[1:] = np.cumsum([x[1] for x in t])
+        self.index = {x[0]: i for i, x in enumerate(t)}
+        self.rest = np.frombuffer(rest_job.result(), np.uint8)
+
+    def coded_bytes(self, i):
+        """bytes of the coded stream of tensor i"""
+        return int(self.soff[self.seg0[i + 1]] - self.soff[self.seg0[i]])
+
+    def outside(self, a, b):
+        """bytes [a, b) of the file, a range outside the coded tensors (header, 1-D tensors, ...)"""
+        k = int(np.searchsorted(self.t_off, a, side="right"))
+        r = a - int(self.before[k])
+        return self.rest[r:r + b - a]
+
+    def fetch(self, idxs):
+        """the coded stream of tensors idxs, read (from any thread) -> argument of decode()"""
+        ranges = []                               # stream ranges, a tensor's next to its neighbour's merged
+        for i in sorted(idxs):
+            s0, s1 = int(self.soff[self.seg0[i]]), int(self.soff[self.seg0[i + 1]])
+            if ranges and ranges[-1][1] == s0:
+                ranges[-1][1] = s1
+            else:
+                ranges.append([s0, s1])
+        n = sum(b - a for a, b in ranges)
+        try:                                      # pinned: uploaded at the bus's full speed
+            host = cupyx.empty_pinned(n, np.uint8)
+        except cp.cuda.runtime.CUDARuntimeError:
+            host = np.empty(n, np.uint8)
+        where, o = {}, 0
+        for a, b in ranges:
+            self.read(a, b - a, host[o:o + b - a])
+            where[a] = o; o += b - a
+        return list(idxs), host, where
+
+    def decode(self, idxs):
+        """coded tensors idxs (layout indices, or what fetch(idxs) returned) -> (device uint8 array,
+        byte offset of each tensor in it)"""
+        t = self.layout["t"]
+        idxs, host, where = idxs if isinstance(idxs, tuple) else self.fetch(idxs)
+        tb = np.zeros(len(idxs), TB_DT)
+        segs, in_off, outs, doff = [], [], [], 0
+        for k, i in enumerate(idxs):
+            off, nb, rl, _ = t[i]
+            tb[k] = (doff, rl, self.rb[i], self.cb[i], self.layout["role"][i] * TPT, self.rmap_off.get(i, -1), 0)
+            n = self.nrows_c[i] * rl
+            sg = np.zeros(-(-n // SEG), SG_DT)
+            sg["t"] = k; sg["i0"] = np.arange(0, n, SEG); sg["n"] = np.minimum(SEG, n - sg["i0"])
+            segs.append(sg)
+            s = self.soff[self.seg0[i]:self.seg0[i + 1]]
+            r0 = max(a for a in where if a <= s[0])     # the range holding this tensor
+            in_off.append(s - np.uint64(r0) + np.uint64(where[r0]))
+            outs.append(doff); doff += -(-nb // 256) * 256
+        sg = np.concatenate(segs) if segs else np.zeros(0, SG_DT)
+        dev = cp.empty(max(doff, 1), cp.uint8)
+        if len(sg):
+            kern("v2_dec")(((len(sg) + 63) // 64,), (64,),
+                           (h2d(host), cp.asarray(np.concatenate(in_off)), dev, cp.asarray(tb.view(np.uint8)),
+                            cp.asarray(sg.view(np.uint8)), np.int32(len(sg)), self.rfi, self.cfi, self.scl,
+                            self.rowmap, self.remap, self.freq, self.cum, self.lut))
+        for k, i in enumerate(idxs):
+            if i in self.dups:
+                off, nb, rl, _ = t[i]
+                u = dev[outs[k]:outs[k] + nb].view(cp.uint16).reshape(-1, rl)
+                d = np.array(self.dups[i], np.int64)
+                u[cp.asarray(d[:, 0])] = u[cp.asarray(d[:, 1])]
+        return dev, outs
+
+    def write_to(self, write, window=1 << 30):
+        """the whole file, in order, through write(bytes-like): decoded a window of tensors at a time"""
+        t = self.layout["t"]
+        pos, i = 0, 0
+        while i < len(t):
+            j, nb = i, 0
+            while j < len(t) and (j == i or nb + t[j][1] <= window):
+                nb += t[j][1]; j += 1
+            dev, outs = self.decode(range(i, j))
+            for k in range(i, j):
+                off, n = t[k][0], t[k][1]
+                if off > pos:
+                    write(self.outside(pos, off))
+                write(dev[outs[k - i]:outs[k - i] + n].get())
+                pos = off + n
+            del dev
+            i = j
+        if pos < self.size:
+            write(self.outside(pos, self.size))

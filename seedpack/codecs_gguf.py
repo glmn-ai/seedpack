@@ -56,7 +56,25 @@ def unpack(buf: bytes) -> dict:
     return chunks
 
 
+def pack_index(read, pos=0) -> dict:
+    """unpack() without the data: read(offset, n) -> bytes of a packed buffer;
+    -> {name: (offset, length)} of its parts (only the small headers are read)"""
+    (n,), pos, out = struct.unpack("<I", read(pos, 4)), pos + 4, {}
+    for _ in range(n):
+        (ln,) = struct.unpack("<H", read(pos, 2))
+        name = bytes(read(pos + 2, ln)).decode()
+        (dl,) = struct.unpack("<Q", read(pos + 2 + ln, 8))
+        out[name] = (pos + 10 + ln, dl)
+        pos += 10 + ln + dl
+    return out
+
+
 def zstd_c(data: bytes, level=19) -> bytes:
+    if len(data) <= (8 << 20):
+        # small data (tables, lengths, metadata: most calls): a 128 MB window, long-distance
+        # matching and worker threads change nothing here, but setting them up costs more than
+        # the compression itself
+        return zstandard.ZstdCompressor(level=level).compress(data)
     params = zstandard.ZstdCompressionParameters.from_level(level, window_log=27, enable_ldm=True, threads=-1)
     return zstandard.ZstdCompressor(compression_params=params).compress(data)
 

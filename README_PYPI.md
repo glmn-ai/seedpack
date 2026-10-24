@@ -16,6 +16,8 @@
 
 The archive is smaller than the repository's largest single quant (UD-Q8_K_XL, 844 MB). The full benchmark against 10 other compressors, with speeds and single files, is on the [example archive's page](https://huggingface.co/neurosquad/Qwen3-0.6B-SEEDPACK).
 
+Models bigger than the GPU's memory are streamed: all of unsloth/Qwen3.5-9B-GGUF (BF16, mmproj and 23 quants, 147.8 GB) packs into [12.4 GB](https://huggingface.co/neurosquad/Qwen3.5-9B-SEEDPACK) in under 4 minutes on a 12 GB card, and its Q4_K_M comes back in 11–16 s.
+
 ## Install
 
 ```bash
@@ -62,7 +64,7 @@ A GGUF repository ships the same weights 20–30 times: the BF16 model plus each
 ## Links
 
 - Source and research notes: <https://github.com/glmn-ai/seedpack>
-- Example archive: <https://huggingface.co/neurosquad/Qwen3-0.6B-SEEDPACK>
+- Example archives: <https://huggingface.co/neurosquad/Qwen3-0.6B-SEEDPACK>, <https://huggingface.co/neurosquad/Qwen3.5-9B-SEEDPACK>
 - A [NeuroSquad](https://huggingface.co/neurosquad) project.
 
 ## License

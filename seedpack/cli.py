@@ -248,12 +248,23 @@ def cmd_pack(a):
         else:
             jobs.append((name, hp.submit(lambda d=data: digest(d))))
 
+    streams = {}
+
+    def on_stream(name):
+        # a derived GGUF of a big model, read in pieces (in order): hashed incrementally
+        streams[name] = _incremental(algo)
+        return streams[name].update
+
     w = Writer(out)
+    # temporary files (a big model's coded residuals waiting for the end of the stream) next to the archive
+    m.scratch = os.environ.get("SEEDPACK_TMP") or os.path.dirname(os.path.abspath(out))
     t0 = time.perf_counter()
     try:
-        m.compress(bases, derived, extras, put=w.put, on_data=on_data)
+        m.compress(bases, derived, extras, put=w.put, on_data=on_data, on_stream=on_stream, put_stream=w.put_stream)
         for n, f in jobs:
             hashes[n] = f.result()
+        for n, h in streams.items():
+            hashes[n] = h.hexdigest()
         catalog = []
         for n, p in files.items():
             catalog.append({"name": n, "size": os.path.getsize(p), "hash": hashes[n],
@@ -290,10 +301,12 @@ class Output:
 
     def __init__(self, catalog, algo, outdir=None, budget=3 << 30):
         self.cat = {f["name"]: f for f in catalog}
+        self.algo = algo
         self.digest = _hasher(algo)
         self.outdir, self.budget = outdir, budget
         self.pool = ThreadPoolExecutor(4)
         self.pending = deque()
+        self.waiting = deque()                # pieces of streamed files being hashed / written
         self.done, self.bad, self.bytes = [], [], 0
 
     def __call__(self, name, data):
@@ -322,6 +335,69 @@ class Output:
         while self.pending:
             self._collect()
 
+    def stream(self, name, size):
+        """a file that arrives in pieces (a big model's): -> object with write(piece), close()"""
+        return _StreamOut(self, name, size)
+
+
+class _StreamOut:
+    """one file written piece by piece: hashed and written in two background lanes (in order);
+    all files' pieces waiting total at most Output.budget bytes"""
+
+    def __init__(self, out, name, size):
+        self.out, self.name, self.size = out, name, size
+        self.h = _incremental(out.algo)
+        self.path = None if out.outdir is None else os.path.join(out.outdir, *name.split("/"))
+        self.f = None
+        if self.path:
+            os.makedirs(os.path.dirname(self.path) or ".", exist_ok=True)
+            self.f = open(self.path + ".part", "wb")
+        self.hl, self.wl = ThreadPoolExecutor(1), ThreadPoolExecutor(1)
+        self.jobs, self.n = [], 0
+
+    def _write(self, buf):
+        mv = memoryview(buf).cast("B")
+        for o in range(0, len(mv), 1 << 28):
+            self.f.write(mv[o:o + (1 << 28)])
+
+    def write(self, buf):
+        n = memoryview(buf).nbytes
+        self.n += n
+        job = (self.hl.submit(self.h.update, buf), self.wl.submit(self._write, buf) if self.f else None, n)
+        self.jobs.append(job)
+        q = self.out.waiting
+        q.append(job)
+        while len(q) > 1 and sum(j[2] for j in q) > self.out.budget:
+            _done(q.popleft())
+
+    def close(self):
+        for job in self.jobs:
+            _done(job)
+        self.hl.shutdown(); self.wl.shutdown()
+        ok = self.n == self.size and self.h.hexdigest() == self.out.cat[self.name]["hash"]
+        if self.f:
+            self.f.close()
+            if ok:
+                os.replace(self.path + ".part", self.path)
+            else:
+                os.remove(self.path + ".part")
+        (self.out.done if ok else self.out.bad).append(self.name)
+        self.out.bytes += self.size
+        print(f"  {'OK ' if ok else 'BAD'} {self.name} ({human(self.size)})", flush=True)
+
+
+def _done(job):
+    job[0].result()
+    if job[1] is not None:
+        job[1].result()
+
+
+def _incremental(algo):
+    if algo == "blake3":
+        import blake3
+        return blake3.blake3(max_threads=blake3.blake3.AUTO)
+    return hashlib.sha256()
+
 
 def _extract(a, outdir):
     gpu_check()
@@ -343,7 +419,7 @@ def _extract(a, outdir):
     out = Output(meta["files"], meta["hash"], outdir)
     t0 = time.perf_counter()
     try:
-        m.decompress(r.get, out, select=sel)
+        m.decompress(r, out, select=sel)
         out.finish()
     except FormatError as e:
         fail(str(e))

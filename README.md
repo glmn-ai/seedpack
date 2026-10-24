@@ -8,12 +8,15 @@ A lossless archiver for GGUF model repositories, by [NeuroSquad](https://hugging
 
 The idea: quants are not stored but "grown" from BF16, like a plant from a seed. llama.cpp quantizers are deterministic, so the archive reruns quantization on the GPU from BF16 with the repository's imatrix, using a bit-exact copy of `ggml-quants.c`. Only the difference from that result is stored, coded with the quantizer's own probabilities.
 
-A ready archive on Hugging Face: [neurosquad/Qwen3-0.6B-SEEDPACK](https://huggingface.co/neurosquad/Qwen3-0.6B-SEEDPACK) — all of unsloth/Qwen3-0.6B-GGUF (BF16 and 25 quants, 10.95 GB) in one file, with a benchmark against 11 archivers.
+Ready archives on Hugging Face:
+- [neurosquad/Qwen3-0.6B-SEEDPACK](https://huggingface.co/neurosquad/Qwen3-0.6B-SEEDPACK) — all of unsloth/Qwen3-0.6B-GGUF (BF16 and 25 quants, 10.95 GB) in one file, with a benchmark against 11 archivers;
+- [neurosquad/Qwen3.5-9B-SEEDPACK](https://huggingface.co/neurosquad/Qwen3.5-9B-SEEDPACK) — all of unsloth/Qwen3.5-9B-GGUF (BF16, mmproj and 23 quants, 147.8 GB) in 12.4 GB.
 
 ## Results
 
 | What is compressed | Original | Archive | % | lmz 1.3.0 |
 |---|---|---|---|---|
+| all of unsloth/Qwen3.5-9B-GGUF (BF16 + mmproj + 23 quants) | 147.81 GB | 12.40 GB | 8.39% | — |
 | all of unsloth/Qwen3-0.6B-GGUF (BF16 + 25 quants) | 10.95 GB | 781.7 MB | 7.14% | 41.5% |
 | all of unsloth/Qwen3.5-0.8B-GGUF | 14.08 GB | 1.12 GB | 7.96% | 41.2% |
 | all of unsloth/Qwen3.5-2B-GGUF | 34.57 GB | 2.91 GB | 8.41% | 43.7% |
@@ -25,6 +28,20 @@ A ready archive on Hugging Face: [neurosquad/Qwen3-0.6B-SEEDPACK](https://huggin
 
 Speed, timings and all test sets are in `bench_competitors/VS_LMZ.md`; the roadmap is in `ROADMAP.md` (both in Russian).
 Unpacking verifies checksums. Measured on an RTX 5070, a Core i7-8700K (6 cores, 12 threads) and an NVMe drive.
+
+### Big models
+
+A BF16 model larger than the GPU's memory (Qwen3.5-9B: 17.9 GB on a 12 GB card) is never held whole. All its quants are packed in one pass over windows of about 1 GB of tensors: each base tensor is read once for all files, and every file is read front to back. Unpacking decodes the base tensor by tensor on the GPU, so the BF16 file touches neither RAM nor disk unless it is extracted itself.
+
+Qwen3.5-9B, the whole repository (147.8 GB), on two SATA SSDs in a stripe (about 1 GB/s):
+
+| | Time | Speed |
+|---|---|---|
+| pack | 210–230 s | 640–700 MB/s |
+| extract Q4_K_M (5.7 GB) | 11–16 s | |
+| test all 28 files | 117 s | 1.26 GB/s |
+
+Peak GPU memory is 9.5 GB, process memory under 20 GB.
 
 ## Installation
 
