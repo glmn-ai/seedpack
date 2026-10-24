@@ -13,7 +13,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 REPO = "neurosquad/Qwen3-0.6B-SEEDPACK"
-ARCHIVE = "Qwen3-0.6B-SEEDPACK.varc"
+ARCHIVE = "Qwen3-0.6B.seedpack"
 GITHUB = "https://github.com/glmn-ai/seedpack"
 res = json.load(open(os.path.join(HERE, "results_hf06.json")))
 files = json.load(open(os.path.join(HERE, "hf06_files.json")))

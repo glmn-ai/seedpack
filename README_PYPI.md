@@ -40,13 +40,13 @@ seedpack x    hf://neurosquad/Qwen3-0.6B-SEEDPACK "*Q4_K*" "*Q8_0*" -o models
 seedpack x    hf://neurosquad/Qwen3-0.6B-SEEDPACK -o models      # everything
 
 # local archives
-seedpack pack  models/Qwen3-0.6B-GGUF -o qwen3.varc               # files and/or folders
-seedpack x     qwen3.varc Qwen3-0.6B-Q4_K_M.gguf -o out
-seedpack test  qwen3.varc                                         # decode and verify, write nothing
+seedpack pack  models/Qwen3-0.6B-GGUF -o qwen3.seedpack           # files and/or folders
+seedpack x     qwen3.seedpack Qwen3-0.6B-Q4_K_M.gguf -o out
+seedpack test  qwen3.seedpack                                         # decode and verify, write nothing
 ```
 
 Notes on the commands:
-- `hf://OWNER/REPO[/FILE.varc][@REVISION]` and `https://huggingface.co/...` links work wherever an archive is expected.
+- `hf://OWNER/REPO[/FILE.seedpack][@REVISION]` and `https://huggingface.co/...` links work wherever an archive is expected.
 - `list` reads only the archive's index over the network; `x` and `test` download the archive once into the Hugging Face cache.
 - Extracted files are checked against BLAKE3 hashes. Every chunk of the archive carries a CRC32.
 

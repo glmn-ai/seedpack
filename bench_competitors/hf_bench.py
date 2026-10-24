@@ -7,7 +7,7 @@ usage: hf_bench.py [dataset ...] [--keep]     -> bench_competitors/results_hf06.
 Datasets: hf-0.6b = the 30 files of the release (every GGUF of unsloth/Qwen3-0.6B-GGUF incl. BF16,
 config.json, params, template, imatrix); bf16 / q8_0 / q4_k_m = single files.
 Timing: compress = files on disk -> archive on disk; decompress = decode + BLAKE3 check of the
-whole output, nothing written (varc test, lmz verify, 7z t; the others decode into a BLAKE3 hash).
+whole output, nothing written (seedpack test, lmz verify, 7z t; the others decode into a BLAKE3 hash).
 Multi-file inputs go to the single-stream compressors as the concatenation of the files (tar-like).
 Chunked tools (brotli, bzip2, gzip, lz4) work on 64 MB blocks with 12 workers, like pigz/pbzip2.
 ZipNN runs inside WSL in memory (I/O excluded). HF Xet and DFloat11 are size estimates (estimates.py).
@@ -69,9 +69,9 @@ def timed(cmd, **kw):
 
 # ---------------------------------------------------------------------------------- tools
 def t_seedpack(ds, paths, ref):
-    arc = f"{OUT}/Qwen3-0.6B-SEEDPACK.varc" if ds == "hf-0.6b" else f"{OUT}/{ds}.varc"
-    tc = timed([rb.PY, f"{rb.ROOT}/varc.py", "pack", *paths, "-o", arc, "-q", "-f"])
-    td = timed([rb.PY, f"{rb.ROOT}/varc.py", "test", arc])
+    arc = f"{OUT}/Qwen3-0.6B.seedpack" if ds == "hf-0.6b" else f"{OUT}/{ds}.seedpack"
+    tc = timed([rb.PY, "-m", "seedpack", "pack", *paths, "-o", arc, "-q", "-f"])
+    td = timed([rb.PY, "-m", "seedpack", "test", arc])
     size = os.path.getsize(arc)
     if not (KEEP and ds == "hf-0.6b"):
         os.remove(arc)

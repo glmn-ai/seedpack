@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 import run_bench as rb
 
 SETS = ["quants-0.6b", "quants-0.8b", "quants-2b", "quants-le4-0.6b", "quantsim-0.6b", "quantsim-0.8b", "quantsim-2b"]
-TOOLS = ("Seedpack (varc)", "lmz 1.3.0", "zstd -3 --long=30")
+TOOLS = ("SeedPack", "lmz 1.3.0", "zstd -3 --long=30")
 
 
 def main():

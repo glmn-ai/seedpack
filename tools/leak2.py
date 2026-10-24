@@ -1,6 +1,6 @@
 import os, sys
 sys.path.insert(0, ".")
-os.environ["VARC_MEMDEBUG"] = "1"
+os.environ["SEEDPACK_MEMDEBUG"] = "1"
 import numpy as np, cupy as cp
 from seedpack import repo3
 from seedpack.repo3 import M29RepoGPU, _keep_base, _mem, _release

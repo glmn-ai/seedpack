@@ -37,19 +37,19 @@ pip install seedpack
 ## Использование
 
 ```
-seedpack pack   ВХОДЫ... -o архив.varc          # файлы и/или папки
+seedpack pack   ВХОДЫ... -o архив.seedpack      # файлы и/или папки
 seedpack unpack АРХИВ [ИМЕНА|МАСКИ] -o DIR       # всё или выбранные файлы (alias: x)
 seedpack list   АРХИВ
 seedpack test   АРХИВ [ИМЕНА|МАСКИ]              # распаковка в памяти + проверка
 ```
 
-АРХИВ — файл `.varc` или архив на Hugging Face: `hf://OWNER/REPO[/FILE.varc][@REVISION]` либо ссылка `https://huggingface.co/...`. `list` читает по сети только индекс, `unpack` и `test` один раз скачивают архив в кэш Hugging Face.
+АРХИВ — файл `.seedpack` или архив на Hugging Face: `hf://OWNER/REPO[/FILE.seedpack][@REVISION]` либо ссылка `https://huggingface.co/...`. `list` читает по сети только индекс, `unpack` и `test` один раз скачивают архив в кэш Hugging Face.
 
 Примеры:
 ```
 seedpack x hf://neurosquad/Qwen3-0.6B-SEEDPACK Qwen3-0.6B-Q4_K_M.gguf -o models
-seedpack pack models/Qwen3-0.6B-GGUF -o qwen3.varc
-seedpack x qwen3.varc "*IQ1*" README.md -o out
+seedpack pack models/Qwen3-0.6B-GGUF -o qwen3.seedpack
+seedpack x qwen3.seedpack "*IQ1*" README.md -o out
 ```
 
 Роли файлов определяются автоматически:
@@ -67,7 +67,7 @@ git clone https://github.com/glmn-ai/seedpack && cd seedpack
 python -m venv .venv
 .venv\Scripts\pip install -r requirements.txt -e .
 sh seedpack/ggml/build.sh         # CPU-библиотека квантизаторов (MinGW gcc): нужна только исследовательским скриптам
-python varc.py --help             # то же, что seedpack
+python -m seedpack --help         # то же, что команда seedpack
 ```
 
 Таблицы IQ-сеток (`seedpack/ggml/iqtables.npz`) построены CPU-библиотекой и лежат в пакете; без файла они строятся заново (около 25 с, нужна `ggmlq.dll`).
@@ -76,7 +76,7 @@ python varc.py --help             # то же, что seedpack
 
 ## Устройство
 
-- `seedpack/cli.py` — CLI (`seedpack`, из исходников — `python varc.py`); `seedpack/container.py` — формат `.varc` (части + индекс в конце, произвольный доступ).
+- `seedpack/cli.py` — CLI (`seedpack` или `python -m seedpack`); `seedpack/container.py` — формат `.seedpack` (части + индекс в конце, произвольный доступ).
 - `seedpack/repo3.py` — ядро: M28/M29 (базы, предсказание квантов, остатки, конвейер).
 - `seedpack/gpuquant.py` — генерация CUDA-кода из `ggml-quants.c`, бит-в-бит с CPU; варианты квантизаторов старых версий llama.cpp.
 - `seedpack/ptxfix.py` — обход ошибки ptxas при делении на константу.

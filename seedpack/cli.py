@@ -1,12 +1,12 @@
 """seedpack - lossless GPU archiver for GGUF model repositories.
 
-    seedpack pack   INPUT... -o ARCHIVE.varc        archive files and/or directories
+    seedpack pack   INPUT... -o ARCHIVE.seedpack     archive files and/or directories
     seedpack unpack ARCHIVE [NAME|GLOB ...] [-o DIR] extract everything or only the given files
     seedpack list   ARCHIVE                         show the files in an archive
     seedpack test   ARCHIVE [NAME|GLOB ...]         decompress in memory and verify every checksum
 
-ARCHIVE may be a local .varc file or an archive on the Hugging Face Hub:
-hf://OWNER/REPO[/FILE.varc][@REVISION] or its https://huggingface.co/... URL (downloaded once
+ARCHIVE may be a local .seedpack file or an archive on the Hugging Face Hub:
+hf://OWNER/REPO[/FILE.seedpack][@REVISION] or its https://huggingface.co/... URL (downloaded once
 into the Hugging Face cache; `list` reads only the index).
 
 All BF16 GGUFs among the inputs (the model, mmproj) are coded as "bases"; every other GGUF is
@@ -97,7 +97,7 @@ def hf_spec(spec):
         rest, rev = rest.rsplit("@", 1)
     parts = rest.strip("/").split("/")
     if len(parts) < 2:
-        fail(f"{spec}: expected hf://OWNER/REPO[/FILE.varc][@REVISION]")
+        fail(f"{spec}: expected hf://OWNER/REPO[/FILE.seedpack][@REVISION]")
     return "/".join(parts[:2]), "/".join(parts[2:]) or None, rev
 
 
@@ -110,16 +110,16 @@ def _hub():
 
 
 def _hf_file(repo, path, rev):
-    """the archive's path in the repo: as given, or the repo's only .varc file"""
+    """the archive's path in the repo: as given, or the repo's only .seedpack file"""
     if path:
         return path
     try:
-        cands = [f for f in _hub().list_repo_files(repo, revision=rev) if f.endswith(".varc")]
+        cands = [f for f in _hub().list_repo_files(repo, revision=rev) if f.endswith(".seedpack")]
     except Exception as e:
         fail(f"hf://{repo}: {e.__class__.__name__}: {e}")
     if len(cands) != 1:
-        fail(f"hf://{repo} has {len(cands)} .varc files{': ' + ', '.join(cands) if cands else ''}; "
-             f"name one: hf://{repo}/FILE.varc")
+        fail(f"hf://{repo} has {len(cands)} .seedpack files{': ' + ', '.join(cands) if cands else ''}; "
+             f"name one: hf://{repo}/FILE.seedpack")
     return cands[0]
 
 
@@ -380,7 +380,7 @@ def main(argv=None):
     sub = p.add_subparsers(dest="cmd", required=True)
     s = sub.add_parser("pack", aliases=["a"], help="archive files and/or directories")
     s.add_argument("inputs", nargs="+", help="files or directories (directory contents keep their relative paths)")
-    s.add_argument("-o", "--output", required=True, help="archive to create (.varc)")
+    s.add_argument("-o", "--output", required=True, help="archive to create (.seedpack)")
     s.add_argument("--method", choices=["m29", "m28"], default="m29", help="m29 (default): BF16 v2 base codec; m28: M24 codec")
     s.add_argument("--level", type=int, default=7, help="zstd level of the residuals (default 7; 9: about 1.5%% smaller, slower)")
     s.add_argument("--cache", type=int, default=None, help="prediction cache in MB (default: a fifth of the RAM, at most 6144)")
@@ -390,7 +390,7 @@ def main(argv=None):
     for name, alias, fn, hlp in (("unpack", "x", cmd_unpack, "extract all or selected files"),
                                  ("test", "t", cmd_test, "decompress in memory and verify checksum")):
         s = sub.add_parser(name, aliases=[alias], help=hlp)
-        s.add_argument("archive", help="a .varc file or hf://OWNER/REPO[/FILE.varc][@REVISION]")
+        s.add_argument("archive", help="a .seedpack file or hf://OWNER/REPO[/FILE.seedpack][@REVISION]")
         s.add_argument("files", nargs="*", help="names or glob patterns (e.g. '*Q4_K_M*'); default: everything")
         if name == "unpack":
             s.add_argument("-o", "--output", default=".", help="output directory (default: current)")
@@ -400,7 +400,7 @@ def main(argv=None):
         s.add_argument("--cache", type=int, default=None, help="prediction cache in MB (default: a fifth of the RAM, at most 6144)")
         s.set_defaults(fn=fn)
     s = sub.add_parser("list", aliases=["l"], help="list the files in an archive")
-    s.add_argument("archive", help="a .varc file or hf://OWNER/REPO[/FILE.varc][@REVISION]")
+    s.add_argument("archive", help="a .seedpack file or hf://OWNER/REPO[/FILE.seedpack][@REVISION]")
     s.set_defaults(fn=cmd_list)
     a = p.parse_args(argv)
     try:

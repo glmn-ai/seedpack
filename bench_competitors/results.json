@@ -298,63 +298,63 @@
   "lossless": true,
   "size": 5461888704
  },
- "bf16-0.6b | Seedpack (varc)": {
+ "bf16-0.6b | SeedPack": {
   "archive": 780618907,
   "compress_s": 7.254082800005563,
   "decompress_s": 3.560075599991251,
   "lossless": true,
   "size": 1198182848
  },
- "bf16-2b | Seedpack (varc)": {
+ "bf16-2b | SeedPack": {
   "archive": 2463376868,
   "compress_s": 17.712144599994645,
   "decompress_s": 7.661258400010411,
   "lossless": true,
   "size": 3775709216
  },
- "q8_0-0.6b | Seedpack (varc)": {
+ "q8_0-0.6b | SeedPack": {
   "archive": 576353039,
   "compress_s": 9.580866799980868,
   "decompress_s": 3.7261637999909,
   "lossless": true,
   "size": 639447744
  },
- "q4_k_m-0.6b | Seedpack (varc)": {
+ "q4_k_m-0.6b | SeedPack": {
   "archive": 372086437,
   "compress_s": 5.222942000022158,
   "decompress_s": 2.4055864000110887,
   "lossless": true,
   "size": 396705472
  },
- "quants-0.6b | Seedpack (varc)": {
+ "quants-0.6b | SeedPack": {
   "archive": 933106291,
   "compress_s": 21.80585239996435,
   "decompress_s": 10.819107700022869,
   "lossless": true,
   "size": 9749987520
  },
- "quants-0.8b | Seedpack (varc)": {
+ "quants-0.8b | SeedPack": {
   "archive": 1103358175,
   "compress_s": 24.131494000030216,
   "decompress_s": 11.60965599998599,
   "lossless": true,
   "size": 11744380160
  },
- "quants-2b | Seedpack (varc)": {
+ "quants-2b | SeedPack": {
   "archive": 3022509468,
   "compress_s": 59.90495340002235,
   "decompress_s": 28.053736499976367,
   "lossless": true,
   "size": 28129760512
  },
- "quants-le4-0.6b | Seedpack (varc)": {
+ "quants-le4-0.6b | SeedPack": {
   "archive": 870951350,
   "compress_s": 16.89457639999455,
   "decompress_s": 7.812735299987253,
   "lossless": true,
   "size": 5461888704
  },
- "quantsim-0.6b | Seedpack (varc)": {
+ "quantsim-0.6b | SeedPack": {
   "archive": 783921106,
   "compress_s": 17.919349800038617,
   "decompress_s": 10.619156899978407,
@@ -373,7 +373,7 @@
   "archive": 5672402395,
   "size": 9751140900
  },
- "quantsim-0.8b | Seedpack (varc)": {
+ "quantsim-0.8b | SeedPack": {
   "archive": 995393557,
   "compress_s": 21.264025999989826,
   "decompress_s": 11.591349599999376,
@@ -392,7 +392,7 @@
   "archive": 7031349938,
   "size": 11745514880
  },
- "quantsim-2b | Seedpack (varc)": {
+ "quantsim-2b | SeedPack": {
   "archive": 2548917205,
   "compress_s": 51.38271400000667,
   "decompress_s": 27.782434099994134,
@@ -411,21 +411,21 @@
   "archive": 25237655357,
   "size": 28131706240
  },
- "repo-0.6b | Seedpack (varc)": {
+ "repo-0.6b | SeedPack": {
   "archive": 781687490,
   "compress_s": 19.767449799983297,
   "decompress_s": 9.943531700002495,
   "lossless": true,
   "size": 10949346377
  },
- "repo-0.8b | Seedpack (varc)": {
+ "repo-0.8b | SeedPack": {
   "archive": 1120528142,
   "compress_s": 24.205659099970944,
   "decompress_s": 12.189188799995463,
   "lossless": true,
   "size": 14077041094
  },
- "repo-2b | Seedpack (varc)": {
+ "repo-2b | SeedPack": {
   "archive": 2908543501,
   "compress_s": 57.829665099969134,
   "decompress_s": 30.496562099957373,

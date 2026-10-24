@@ -1,6 +1,6 @@
 # models and archives (tens of GB)
 models/
-*.varc
+*.seedpack
 *.part
 
 # environment and caches

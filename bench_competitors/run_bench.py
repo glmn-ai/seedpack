@@ -1,9 +1,9 @@
-"""Benchmark Seedpack (varc) against other lossless compressors on GGUF data.
+"""Benchmark SeedPack against other lossless compressors on GGUF data.
 
 usage: run_bench.py [dataset ...]      (default: all)    -> bench_competitors/results.json
 
 Timing: "compress" = from the files on disk to the archive; "decompress" = decode + check
-without writing the files (varc test / lmz verify / zstd and xz to a null sink), except ZipNN
+without writing the files (seedpack test / lmz verify / zstd and xz to a null sink), except ZipNN
 which is measured in memory inside WSL (I/O excluded). DFloat11 and Xet are size estimates
 (estimates.py): DFloat11's tool takes transformers models only, Xet is server-side.
 """
@@ -59,11 +59,11 @@ def rm(p):
 
 
 # ---------------------------------------------------------------------------------- tools
-def t_varc(name, paths):
-    arc = f"{OUT}/{name}.varc"
+def t_seedpack(name, paths):
+    arc = f"{OUT}/{name}.seedpack"
     rm(arc)
-    tc, _ = sh([PY, f"{ROOT}/varc.py", "pack", *paths, "-o", arc, "-q", "-f"])
-    td, _ = sh([PY, f"{ROOT}/varc.py", "test", arc])
+    tc, _ = sh([PY, "-m", "seedpack", "pack", *paths, "-o", arc, "-q", "-f"])
+    td, _ = sh([PY, "-m", "seedpack", "test", arc])
     size = os.path.getsize(arc)
     rm(arc)
     return dict(archive=size, compress_s=tc, decompress_s=td, lossless=True)
@@ -183,7 +183,7 @@ def t_est(kind):
 
 
 TOOLS = {
-    "Seedpack (varc)": (t_varc, "all"),
+    "SeedPack": (t_seedpack, "all"),
     "lmz 1.3.0": (t_lmz, "all"),
     "ZipNN 0.5.4": (t_zipnn, "all"),
     "zstd -3 --long=30": (t_zstd(3, True), "all"),

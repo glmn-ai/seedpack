@@ -5,6 +5,6 @@ cupy-cuda13x==14.2.0
 nvidia-cuda-nvrtc==13.4.92
 nvidia-nvjitlink==13.4.92
 blake3==1.0.11
-# optional: memory diagnostics (VARC_MEMDEBUG=1)
+# optional: memory diagnostics (SEEDPACK_MEMDEBUG=1)
 psutil==7.2.2
 huggingface_hub==2.2.0

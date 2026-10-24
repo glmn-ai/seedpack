@@ -1,12 +1,12 @@
-"""The .varc container: a sequence of named chunks with an index at the end, so any chunk can be
+"""The .seedpack container: a sequence of named chunks with an index at the end, so any chunk can be
 read without touching the others (selective extraction) and chunks can be written as soon as
 they are produced (the archive is never held in memory as a whole).
 
 Layout:
-    "VARC" | u32 format version
+    "SEEDPACK" | u32 format version
     chunk bytes, back to back
     index: zstd(JSON {"chunks": {name: [offset, length, crc32]}, "meta": {...}})
-    footer: u64 index offset | u64 index length | b"VARCEND\\0"
+    footer: u64 index offset | u64 index length | b"SEEDEND\\0"
 """
 import json
 import os
@@ -18,10 +18,10 @@ from concurrent.futures import ThreadPoolExecutor
 
 import zstandard
 
-MAGIC = b"VARC"
+MAGIC = b"SEEDPACK"
 VERSION = 1
 _FOOTER = struct.Struct("<QQ8s")
-_END = b"VARCEND\0"
+_END = b"SEEDEND\0"
 
 
 class FormatError(Exception):
@@ -78,11 +78,12 @@ class Reader:
         of `size` bytes (e.g. a remote file)"""
         self.path = path
         self.f = fileobj if fileobj is not None else open(path, "rb")
-        head = self.f.read(8)
-        if head[:4] != MAGIC:
-            raise FormatError(f"{path}: not a .varc archive")
-        if struct.unpack("<I", head[4:])[0] > VERSION:
-            raise FormatError(f"{path}: format version {struct.unpack('<I', head[4:])[0]} is newer than this tool")
+        head = self.f.read(len(MAGIC) + 4)
+        if head[:len(MAGIC)] != MAGIC:
+            raise FormatError(f"{path}: not a .seedpack archive")
+        version = struct.unpack("<I", head[len(MAGIC):])[0]
+        if version > VERSION:
+            raise FormatError(f"{path}: format version {version} is newer than this tool")
         self.f.seek(-_FOOTER.size, os.SEEK_END)
         off, n, end = _FOOTER.unpack(self.f.read(_FOOTER.size))
         if end != _END:

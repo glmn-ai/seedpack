@@ -10,7 +10,7 @@ from seedpack.repo3 import M28RepoGPU, M29RepoGPU
 from seedpack.gpuquant import GPUQuant
 
 d = sys.argv[1] if len(sys.argv) > 1 else "models/unsloth"
-arc_path = sys.argv[2] if len(sys.argv) > 2 else os.path.basename(os.path.normpath(d)) + ".varc"
+arc_path = sys.argv[2] if len(sys.argv) > 2 else os.path.basename(os.path.normpath(d)) + ".seedpack"
 paths = sorted(p for p in glob.glob(os.path.join(d, "*")) + glob.glob(os.path.join(d, ".*"))
                if os.path.isfile(p) and os.path.basename(p) != ".files")
 base_paths = [p for p in paths if p.endswith(".gguf") and "BF16" in os.path.basename(p)]

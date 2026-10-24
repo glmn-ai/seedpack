@@ -26,7 +26,7 @@ def table(rows, title):
     out = [f"## {title}", "", "| Набор | Исходно | Seedpack | lmz | Seedpack / lmz | Сжатие Seedpack / lmz | Распаковка Seedpack / lmz |",
            "|---|---:|---:|---:|---:|---:|---:|"]
     for key, name in rows:
-        s, l = r.get(f"{key} | Seedpack (varc)"), r.get(f"{key} | lmz 1.3.0")
+        s, l = r.get(f"{key} | SeedPack"), r.get(f"{key} | lmz 1.3.0")
         if not s or not l or "archive" not in s or "archive" not in l:
             continue
         n = s["size"]
@@ -38,7 +38,7 @@ def table(rows, title):
 
 lines = ["# Seedpack vs lmz 1.3.0", "",
          "Одна машина (RTX 5070, Core i7-8700K (6 ядер, 12 потоков), NVMe). Сжатие — от файлов на диске до архива; распаковка — декодирование "
-         "с проверкой без записи на диск (`varc test` / `lmz verify`). Время Seedpack включает запуск процесса и "
+         "с проверкой без записи на диск (`seedpack test` / `lmz verify`). Время Seedpack включает запуск процесса и "
          "инициализацию GPU (2–4 с). Все архивы обоих инструментов восстанавливаются побайтово.", ""]
 lines += table(SINGLE, "Одиночные файлы и репозитории целиком")
 lines += table(QUANTS, "Наборы квантов без BF16")

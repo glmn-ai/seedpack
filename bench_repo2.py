@@ -24,7 +24,7 @@ base = open(base_path, "rb").read()
 m = M27RepoRequant(); m.verbose = True
 t0 = time.perf_counter(); arc = m.compress(base, files, extras); t1 = time.perf_counter()
 del base
-with open("qwen3-0.6b-repo.varc", "wb") as f:
+with open("qwen3-0.6b-repo.seedpack", "wb") as f:
     f.write(arc)
 got = {}
 m.decompress(arc, lambda n, b: got.__setitem__(n, hashlib.sha256(b).digest()))

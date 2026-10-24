@@ -87,8 +87,8 @@ def _read_file(path):
 
 
 def _mem():
-    """process commit charge, when VARC_MEMDEBUG is set (debugging aid)"""
-    if not os.environ.get("VARC_MEMDEBUG"):
+    """process commit charge, when SEEDPACK_MEMDEBUG is set (debugging aid)"""
+    if not os.environ.get("SEEDPACK_MEMDEBUG"):
         return ""
     import psutil
     free, total = cp.cuda.runtime.memGetInfo()
@@ -112,8 +112,8 @@ def _dev_free():
 
 
 def _fits_gpu(n):
-    """whether a base of n bytes is kept whole on the GPU (VARC_BASE_GPU_MAX_MB caps it, for tests)"""
-    cap = os.environ.get("VARC_BASE_GPU_MAX_MB")
+    """whether a base of n bytes is kept whole on the GPU (SEEDPACK_BASE_GPU_MAX_MB caps it, for tests)"""
+    cap = os.environ.get("SEEDPACK_BASE_GPU_MAX_MB")
     return n + GPU_RESERVE <= _dev_free() and (cap is None or n <= int(cap) << 20)
 
 
@@ -642,7 +642,7 @@ class M28RepoGPU:
     def _q8_codec(self):
         if getattr(self, "_q8", None) is None:
             from .gpu3 import Q8Parts
-            self._q8 = Q8Parts(int(os.environ.get("VARC_Q8_PART_MB", 0)) << 20 or None)
+            self._q8 = Q8Parts(int(os.environ.get("SEEDPACK_Q8_PART_MB", 0)) << 20 or None)
         return self._q8
 
     def _no_base(self, data):

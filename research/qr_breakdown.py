@@ -5,10 +5,10 @@ from seedpack import qr
 from seedpack.gguf_reader import TYPE_NAMES
 qr.STATS = {}
 import runpy
-out = os.path.join(tempfile.gettempdir(), "qr_breakdown.varc")
-sys.argv = ["varc.py", "pack", sys.argv[1], "-o", out, "-f", "-q"]
+out = os.path.join(tempfile.gettempdir(), "qr_breakdown.seedpack")
+sys.argv = ["seedpack", "pack", sys.argv[1], "-o", out, "-f", "-q"]
 try:
-    runpy.run_path(os.path.join(os.path.dirname(__file__), "..", "varc.py"), run_name="__main__")
+    runpy.run_module("seedpack", run_name="__main__")
 except SystemExit:
     pass
 os.remove(out)

@@ -2,7 +2,7 @@
 
 | tool | archive | % of input | compress | decompress | lossless |
 |---|---:|---:|---:|---:|---|
-| **Seedpack (varc)** | 780.6 MB | 65.15% | 165 MB/s | 337 MB/s | True |
+| **SeedPack** | 780.6 MB | 65.15% | 165 MB/s | 337 MB/s | True |
 | lmz 1.3.0 | 790.4 MB | 65.97% | 762 MB/s | 1,233 MB/s | True |
 | ZipNN 0.5.4 | 797.4 MB | 66.55% | 1,165 MB/s | 6,613 MB/s | True |
 | DFloat11 (estimate) | 800.4 MB | 66.81% | — | — | size estimate (format model) |
@@ -15,7 +15,7 @@
 
 | tool | archive | % of input | compress | decompress | lossless |
 |---|---:|---:|---:|---:|---|
-| **Seedpack (varc)** | 2,463.4 MB | 65.24% | 213 MB/s | 493 MB/s | True |
+| **SeedPack** | 2,463.4 MB | 65.24% | 213 MB/s | 493 MB/s | True |
 | lmz 1.3.0 | 2,487.1 MB | 65.87% | 914 MB/s | 1,416 MB/s | True |
 | ZipNN 0.5.4 | 2,511.2 MB | 66.51% | 1,168 MB/s | 6,668 MB/s | True |
 | DFloat11 (estimate) | 2,516.1 MB | 66.64% | — | — | size estimate (format model) |
@@ -28,7 +28,7 @@
 
 | tool | archive | % of input | compress | decompress | lossless |
 |---|---:|---:|---:|---:|---|
-| **Seedpack (varc)** | 576.4 MB | 90.13% | 67 MB/s | 172 MB/s | True |
+| **SeedPack** | 576.4 MB | 90.13% | 67 MB/s | 172 MB/s | True |
 | lmz 1.3.0 | 594.7 MB | 93.01% | 368 MB/s | 855 MB/s | True |
 | zstd -19 | 608.5 MB | 95.17% | 35 MB/s | 299 MB/s | True |
 | zstd -3 --long=30 | 609.1 MB | 95.25% | 208 MB/s | 284 MB/s | True |
@@ -40,7 +40,7 @@
 
 | tool | archive | % of input | compress | decompress | lossless |
 |---|---:|---:|---:|---:|---|
-| **Seedpack (varc)** | 372.1 MB | 93.79% | 76 MB/s | 165 MB/s | True |
+| **SeedPack** | 372.1 MB | 93.79% | 76 MB/s | 165 MB/s | True |
 | lmz 1.3.0 | 376.9 MB | 95.01% | 102 MB/s | 430 MB/s | True |
 | zstd -19 | 384.7 MB | 96.97% | 29 MB/s | 285 MB/s | True |
 | zstd -3 --long=30 | 385.9 MB | 97.28% | 191 MB/s | 309 MB/s | True |
@@ -52,7 +52,7 @@
 
 | tool | archive | % of input | compress | decompress | lossless |
 |---|---:|---:|---:|---:|---|
-| **Seedpack (varc)** | 781.7 MB | 7.14% | 554 MB/s | 1,101 MB/s | True |
+| **SeedPack** | 781.7 MB | 7.14% | 554 MB/s | 1,101 MB/s | True |
 | lmz 1.3.0 | 4,540.2 MB | 41.47% | 303 MB/s | 2,123 MB/s | True |
 | HF Xet (estimate) | 5,110.7 MB | 46.68% | — | — | size estimate (CDC dedup + lz4 / bg4+lz4) |
 | zstd -3 --long=30 | 6,608.9 MB | 60.36% | 375 MB/s | — |  |
@@ -62,7 +62,7 @@
 
 | tool | archive | % of input | compress | decompress | lossless |
 |---|---:|---:|---:|---:|---|
-| **Seedpack (varc)** | 1,120.5 MB | 7.96% | 582 MB/s | 1,155 MB/s | True |
+| **SeedPack** | 1,120.5 MB | 7.96% | 582 MB/s | 1,155 MB/s | True |
 | lmz 1.3.0 | 5,799.7 MB | 41.20% | 400 MB/s | 2,264 MB/s | True |
 | HF Xet (estimate) | 6,680.9 MB | 47.46% | — | — | size estimate (CDC dedup + lz4 / bg4+lz4) |
 | zstd -3 --long=30 | 8,701.0 MB | 61.81% | 350 MB/s | — |  |
@@ -72,7 +72,7 @@
 
 | tool | archive | % of input | compress | decompress | lossless |
 |---|---:|---:|---:|---:|---|
-| **Seedpack (varc)** | 2,908.5 MB | 8.41% | 598 MB/s | 1,134 MB/s | True |
+| **SeedPack** | 2,908.5 MB | 8.41% | 598 MB/s | 1,134 MB/s | True |
 | lmz 1.3.0 | 15,120.6 MB | 43.74% | 464 MB/s | 2,035 MB/s | True |
 | HF Xet (estimate) | 17,417.1 MB | 50.38% | — | — | size estimate (CDC dedup + lz4 / bg4+lz4) |
 | zstd -3 --long=30 | 29,820.9 MB | 86.26% | 323 MB/s | — |  |

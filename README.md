@@ -37,19 +37,19 @@ You need an NVIDIA GPU (Turing or newer) with a CUDA 13 driver (R580+) and Pytho
 ## Usage
 
 ```
-seedpack pack   INPUTS... -o archive.varc         # files and/or folders
+seedpack pack   INPUTS... -o archive.seedpack     # files and/or folders
 seedpack unpack ARCHIVE [NAMES|MASKS] -o DIR      # everything or selected files (alias: x)
 seedpack list   ARCHIVE
 seedpack test   ARCHIVE [NAMES|MASKS]             # unpack in memory and verify
 ```
 
-ARCHIVE is a `.varc` file or an archive on Hugging Face: `hf://OWNER/REPO[/FILE.varc][@REVISION]` or an `https://huggingface.co/...` link. `list` reads only the index over the network; `unpack` and `test` download the archive once into the Hugging Face cache.
+ARCHIVE is a `.seedpack` file or an archive on Hugging Face: `hf://OWNER/REPO[/FILE.seedpack][@REVISION]` or an `https://huggingface.co/...` link. `list` reads only the index over the network; `unpack` and `test` download the archive once into the Hugging Face cache.
 
 Examples:
 ```
 seedpack x hf://neurosquad/Qwen3-0.6B-SEEDPACK Qwen3-0.6B-Q4_K_M.gguf -o models
-seedpack pack models/Qwen3-0.6B-GGUF -o qwen3.varc
-seedpack x qwen3.varc "*IQ1*" README.md -o out
+seedpack pack models/Qwen3-0.6B-GGUF -o qwen3.seedpack
+seedpack x qwen3.seedpack "*IQ1*" README.md -o out
 ```
 
 File roles are detected automatically:
@@ -67,7 +67,7 @@ git clone https://github.com/glmn-ai/seedpack && cd seedpack
 python -m venv .venv
 .venv\Scripts\pip install -r requirements.txt -e .
 sh seedpack/ggml/build.sh         # CPU quantizer library (MinGW gcc): only the research scripts need it
-python varc.py --help             # same as seedpack
+python -m seedpack --help         # same as the seedpack command
 ```
 
 The IQ grid tables (`seedpack/ggml/iqtables.npz`) are built by the CPU library and ship in the package; without the file they are rebuilt (about 25 s, needs `ggmlq.dll`).
@@ -76,7 +76,7 @@ Publishing: `python -m build`, then `twine upload dist/*`.
 
 ## Code layout
 
-- `seedpack/cli.py` — the CLI (`seedpack`; from sources, `python varc.py`); `seedpack/container.py` — the `.varc` format (chunks plus an index at the end, random access).
+- `seedpack/cli.py` — the CLI (`seedpack`, or `python -m seedpack`); `seedpack/container.py` — the `.seedpack` format (chunks plus an index at the end, random access).
 - `seedpack/repo3.py` — the core: M28/M29 (bases, quant prediction, residuals, pipeline).
 - `seedpack/gpuquant.py` — CUDA code generated from `ggml-quants.c`, bit-exact with the CPU; quantizer variants of older llama.cpp versions.
 - `seedpack/ptxfix.py` — a workaround for a ptxas bug in division by a constant.
