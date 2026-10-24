@@ -429,10 +429,17 @@ def _xor3(a, b, c):
     return out, sum(f.result() for f in [_POOL.submit(one, o) for o in range(0, len(a), _CHUNK)])
 
 
+_CPOOL = ThreadPoolExecutor(4)
+
+
 def _pcopy(a):
-    """a copy of a (big) array, made in parallel chunks"""
+    """a copy of an array, a big one in parallel chunks in a pool of its own (in _POOL it would
+    wait behind the XOR jobs queued for the file, and the GPU with it)"""
+    if a.nbytes < (64 << 20):
+        return a.copy()
     out = np.empty_like(a)
-    for f in _copy_async(out, a):
+    step = -(-len(a) // 4)
+    for f in [_CPOOL.submit(np.copyto, out[o:o + step], a[o:o + step]) for o in range(0, len(a), step)]:
         f.result()
     return out
 
@@ -1341,6 +1348,10 @@ class M28RepoGPU:
                 if self.verbose:
                     src = list(bases)[b] if b is not None else "no base: " + ("M21" if "codec" in entry else "zstd only")
                     print(f"  {name}: {fsize[i]:,} B (from {src}){_mem()}", flush=True)
+                if j == len(todo) // 2:
+                    # the coded bases written while the other half of the files is coded (at the
+                    # end they would delay the close); at a fixed point: the same chunk order every run
+                    put_bases(wait=True)
             drain(0)
         rd.shutdown()
         put_bases(wait=True)
