@@ -11,9 +11,12 @@ the BF16 weights and the repository's imatrix. Differences from M27:
     hashing / dedup pass is needed: a repeated tensor is predicted exactly and costs nothing;
   * file reading, zstd and the GPU work are pipelined.
 """
+import bisect
+import dataclasses
 import json
 import lzma
 import os
+import re
 import threading
 import time
 from collections import Counter, deque, namedtuple
@@ -24,6 +27,7 @@ import blake3
 import numpy as np
 import zstandard
 
+from . import __version__
 from .codecs_gguf import nbytes, pack, pack_index, pack_parts, unpack, zstd_c, zstd_d
 from .gguf_reader import GGUF
 from .gpu_bf16 import M24BF16GPU
@@ -247,6 +251,48 @@ class _DevBase:
         return self.dev[(s.start, s.stop)]
 
 
+_SHARD = re.compile(r"^(.*)-(\d{5})-of-(\d{5})\.gguf$")
+
+
+def _joined_groups(names):
+    """the files among `names` that are the shards of one split GGUF (llama.cpp's gguf-split:
+    <model>-00001-of-0000N.gguf, ...), all of them present -> [[their indices, in shard order]]"""
+    found = {}
+    for i, n in enumerate(names):
+        m = _SHARD.match(n)
+        if m:
+            found.setdefault((m[1], int(m[3])), {})[int(m[2])] = i
+    return [[g[k] for k in range(1, cnt + 1)] for (_, cnt), g in found.items()
+            if cnt > 1 and sorted(g) == list(range(1, cnt + 1))]
+
+
+class _Joined:
+    """the shards of a split model as one base: their files one after the other (shard k from
+    byte start_k on), sliced as one file is (a tensor never spans two shards). parts: [(start_k,
+    the shard as a base holds it: device array, _HostBase, R2Tensors...)]"""
+
+    def __init__(self, parts):
+        self.parts = parts
+        self.starts = [s for s, _ in parts]
+        self.lazy = any(isinstance(d, _HostBase) for _, d in parts)
+
+    def part(self, offset):
+        return self.parts[bisect.bisect_right(self.starts, offset) - 1]
+
+    def __getitem__(self, s):
+        start, d = self.part(s.start)
+        return d[s.start - start:s.stop - start]
+
+
+def _seg(path, offset):
+    """(file, offset in it) of byte `offset` of a base: its file, or a split model's shards
+    [(start, file)] one after the other"""
+    if isinstance(path, str):
+        return path, offset
+    start, p = path[bisect.bisect_right([s for s, _ in path], offset) - 1]
+    return p, offset - start
+
+
 class _Residual:
     """a file's residual, its zstd stream read forward into fresh buffers, span by span"""
 
@@ -339,13 +385,14 @@ def _scratch_array(n, where=None):
     return np.frombuffer(mm, np.uint8)
 
 
-def _keep_base(data, chunk=256 << 20):
+def _keep_base(data, chunk=256 << 20, host=False):
     """(header bytes, the file as the GPU code reads it): on the GPU, uploaded in chunks (no
-    whole-file staging copy), or a _HostBase when the GPU has no room for it"""
+    whole-file staging copy), or a _HostBase when the GPU has no room for it (or `host`: a shard
+    of a split model that is streamed)"""
     mv = memoryview(data).cast("B")
     head = bytes(mv[:GGUF.from_bytes(mv, light=True).data_start])
     del mv
-    if not _fits_gpu(len(data)):
+    if host or not _fits_gpu(len(data)):
         return head, _HostBase(data)
     dev = cp.empty(len(data), cp.uint8)
     host = np.frombuffer(data, np.uint8)
@@ -536,6 +583,7 @@ class M28RepoGPU:
             bg = GGUF.from_bytes(hdr, light=True)
             zd = zstandard.ZstdCompressionDict(bytes(hdr[:bg.data_start]), dict_type=zstandard.DICT_TYPE_RAWCONTENT)
             self.bases.append((None, dev, {t.name: t for t in bg.tensors}, zd))
+        self.n_files = len(self.bases)           # bases that are files; split models' come after (_join)
         self.imatrix = imatrix
         self.cache, self.cached = {}, 0
         self._lock = threading.Lock()             # the cache is filled from two threads (streamed windows)
@@ -552,17 +600,36 @@ class M28RepoGPU:
         else:
             self.base, self.base_dev, self.by_name, self.zdict = self.bases[b]
 
+    def _join(self, joined):
+        """one more base per split model (manifest "joined": [{"parts": [[base index, start],
+        ...], "size": bytes}]): its shards one after the other (_Joined), every tensor at its
+        offset there; the residuals' zstd dictionary is the first shard's header"""
+        for g in joined:
+            if any(self.bases[i] is None for i, _ in g["parts"]):
+                self.bases.append(None)         # not needed for this extraction
+                continue
+            by_name = {}
+            for i, start in g["parts"]:
+                for n, t in self.bases[i][2].items():
+                    by_name[n] = dataclasses.replace(t, offset=t.offset + start)
+            self.bases.append((None, _Joined([(start, self.bases[i][1]) for i, start in g["parts"]]), by_name,
+                               self.bases[g["parts"][0][0]][3]))
+
     def _best_base(self, qg):
-        """index of the base sharing most tensor names with qg, or None (nothing in common)"""
+        """index of the base sharing most tensor names with qg, or None (nothing in common); on a
+        tie, a split model (_join) rather than one of its shards"""
         names = {t.name for t in qg.tensors}
         common = [len(names & b[2].keys()) if b else 0 for b in self.bases]
-        return max(range(len(common)), key=common.__getitem__) if common and max(common) else None
+        if not common or not max(common):
+            return None
+        best = [i for i, c in enumerate(common) if c == max(common)]
+        return best[-1] if best[-1] >= self.n_files else best[0]
 
     def _src(self, bt, lazy=False, dev=None):
         """base tensor bt as the quantisers take it; lazy, from a base in host memory: a _Upload.
         dev: the base to take it from (default: the current one)"""
         dev = self.base_dev if dev is None else dev
-        if lazy and isinstance(dev, _HostBase):
+        if lazy and (isinstance(dev, _HostBase) or getattr(dev, "lazy", False)):
             return _Upload(lambda: self._view(dev, bt), int(np.prod(bt.shape)))
         return self._view(dev, bt)
 
@@ -1121,6 +1188,25 @@ class M28RepoGPU:
         self.seed_files = set(seeds)
         bases = {**bases, **{n: files[n] for n in seeds}}
         files = {n: p for n, p in files.items() if n not in self.seed_files}
+        bnames, bpaths = list(bases), list(bases.values())
+        bsize = [os.path.getsize(p) for p in bpaths]
+        # the shards of a split model are coded as separate bases, but predict as one (_join)
+        joined = []
+        for g in _joined_groups(bnames):
+            if not any(bnames[i] in self.seed_files for i in g):
+                starts = np.cumsum([0] + [bsize[i] for i in g[:-1]]).tolist()
+                joined.append({"parts": [[i, s] for i, s in zip(g, starts)], "size": sum(bsize[i] for i in g)})
+        # a split model too big for the GPU is streamed whole: its shards are read from their files
+        # (and stay off the GPU), even those that would fit
+        hosted = {i for g in joined if not _fits_gpu(g["size"]) for i, _ in g["parts"]}
+        bpaths += [[(s, bpaths[i]) for i, s in g["parts"]] for g in joined]
+        bsize += [g["size"] for g in joined]
+
+        def bname(b):
+            if b < len(bnames):
+                return bnames[b]
+            parts = joined[b - len(bnames)]["parts"]
+            return f"{bnames[parts[0][0]]} + {len(parts) - 1} more shard(s)"
 
         def read(name):
             # in the reader thread: the content is seen (hashed) before it is XOR-ed in place,
@@ -1134,7 +1220,7 @@ class M28RepoGPU:
         rd = ThreadPoolExecutor(1)
         # a base too big for the GPU is a big model: its coding (output and buffers of gigabytes)
         # is finished before the derived files are read, not overlapped with them
-        huge = any(not _fits_gpu(os.path.getsize(p)) for p in bases.values())
+        huge = any(not _fits_gpu(os.path.getsize(p)) for p in bases.values()) or bool(hosted)
         # the first derived file is read while the bases are coded
         reads = {0: rd.submit(read, names[0])} if names and not huge else {}
         kept = []
@@ -1191,7 +1277,7 @@ class M28RepoGPU:
 
         for i, (name, path) in enumerate(bases.items()):
             rd_ = None
-            if _fits_gpu(os.path.getsize(path)):
+            if _fits_gpu(os.path.getsize(path)) and i not in hosted:
                 data = _read_file(path)
                 seen(name, data)
             else:
@@ -1201,7 +1287,7 @@ class M28RepoGPU:
                 rd_ = _HashingReader(path, on_stream(name) if on_stream else None)
                 if on_stream is None:
                     seen(name, data)
-            kept.append(_keep_base(data))
+            kept.append(_keep_base(data, host=i in hosted))
             if rd_ is not None and put_stream is not None and isinstance(self.base_codec, R2Base) \
                     and name not in self.seed_files and big1.index is None:
                 big1.index = i
@@ -1232,6 +1318,7 @@ class M28RepoGPU:
                 print(f"  {n}: {len(data):,} -> {len(c):,} B (zstd){_mem()}", flush=True)
             del data, c
         self._setup(kept, self._imatrix(ex))
+        self._join(joined)
         self._expect((t.name, t.type, 0) for p in files.values() for t in _quant_tensors(p))
         self.seen_t, self.keep_until, self.live = {}, {}, []      # duplicate tensors (_dedup)
         if self.verbose:
@@ -1251,6 +1338,9 @@ class M28RepoGPU:
 
         manifest = {"method": self.name, "bases": list(bases), "seeds": seeds, "files": [None] * len(names),
                     "extras": {"bundle": list(ex), "single": big}}
+        if joined:
+            manifest["joined"] = joined           # base index len(bases) + k: split model k
+            manifest["needs"] = "0.3.0"           # the first version that reads it
         pending = deque()                     # (file index, zstd future, bytes held)
 
         def drain(limit):
@@ -1288,8 +1378,8 @@ class M28RepoGPU:
             put_bases(wait=True)                # its coded form out of memory before the files
 
         # the files derived from a base too big for the GPU: all together, window by window
-        large = [k for k, (n, p) in enumerate(bases.items())
-                 if n not in self.seed_files and not _fits_gpu(os.path.getsize(p))]
+        large = [k for k in range(len(bpaths)) if not (k < len(bnames) and bnames[k] in self.seed_files)
+                 and not _fits_gpu(bsize[k])]
         streamed = {}
         if large and (on_data is None or on_stream is not None):
             per = {}
@@ -1300,7 +1390,7 @@ class M28RepoGPU:
             single = (zstandard.ZstdCompressionParameters.from_level(self.level, window_log=25),
                       zstandard.ZstdCompressionParameters.from_level(max(self.level, 9), window_log=25))
             for bb, its in per.items():
-                for i, (entry, c, q) in self._stream_encode(bb, list(bases.values())[bb], its, single, on_stream).items():
+                for i, (entry, c, q) in self._stream_encode(bb, bpaths[bb], its, single, on_stream).items():
                     put(f"f{i}", c)
                     self.sizes[names[i]] = nbytes(c)
                     if q is not None:
@@ -1309,7 +1399,7 @@ class M28RepoGPU:
                     manifest["files"][i] = entry
                     streamed[i] = True
                     if self.verbose:
-                        print(f"  {names[i]}: {fsize[i]:,} B (from {list(bases)[bb]}, streamed){_mem()}", flush=True)
+                        print(f"  {names[i]}: {fsize[i]:,} B (from {bname(bb)}, streamed){_mem()}", flush=True)
         todo = [i for i in range(len(names)) if i not in streamed]
 
         # pipelined: the next file is read and older residuals are compressed while the GPU
@@ -1346,7 +1436,7 @@ class M28RepoGPU:
                 pending.append((i, job, len(data)))
                 del data, c
                 if self.verbose:
-                    src = list(bases)[b] if b is not None else "no base: " + ("M21" if "codec" in entry else "zstd only")
+                    src = bname(b) if b is not None else "no base: " + ("M21" if "codec" in entry else "zstd only")
                     print(f"  {name}: {fsize[i]:,} B (from {src}){_mem()}", flush=True)
                 if j == len(todo) // 2:
                     # the coded bases written while the other half of the files is coded (at the
@@ -1440,29 +1530,52 @@ class M28RepoGPU:
             out.append((order, wins, gf))
         return out, rejected
 
+    @staticmethod
+    def _rt_parts(rt):
+        """[(start, R2Tensors)]: a split model's shards (_Joined), or the one file"""
+        return rt.parts if isinstance(rt, _Joined) else [(0, rt)]
+
     def _window_fetch(self, rt, names):
-        """the coded stream of the base tensors `names`, read (in a background thread)"""
-        return rt.fetch([rt.index[o] for o in {self.by_name[n].offset for n in names} if o in rt.index])
+        """the coded stream of the base tensors `names`, read (in a background thread): per file
+        of the base (a split model's shards)"""
+        offs = {self.by_name[n].offset for n in names}
+        out = []
+        for s, p in self._rt_parts(rt):
+            idx = [p.index[o - s] for o in offs if s <= o < s + p.size and o - s in p.index]
+            out.append(p.fetch(idx) if idx else ([], None, {}))
+        return out
 
     def _window_base(self, rt, names, fetched=None):
-        """_DevBase holding the base tensors `names` (R2Tensors rt: coded ones decoded on the GPU,
-        the others uploaded from the base's uncoded part); fetched: _window_fetch's result"""
+        """_DevBase holding the base tensors `names` (R2Tensors rt, or a split model's: coded ones
+        decoded on the GPU, the others uploaded from the base's uncoded part); fetched:
+        _window_fetch's result"""
         bts = {self.by_name[n].offset: self.by_name[n] for n in names}
-        coded = [rt.index[o] for o in bts if o in rt.index]
-        dev, outs = rt.decode(fetched if fetched is not None else coded)
-        coded = fetched[0] if fetched is not None else coded
-        win = _DevBase(dev)
-        for k, i in enumerate(coded):
-            off, nb = rt.layout["t"][i][0], rt.layout["t"][i][1]
-            win.add((off, off + nb), outs[k])
-        others = [bt for o, bt in bts.items() if o not in rt.index]
+        parts = self._rt_parts(rt)
+        fetched = fetched if fetched is not None else self._window_fetch(rt, names)
+        win, coded = None, set()
+        for (s, p), f in zip(parts, fetched):
+            if not f[0]:
+                continue
+            dev, outs = p.decode(f)
+            if win is None:
+                win = _DevBase(dev)
+            for k, i in enumerate(f[0]):
+                off, nb = s + p.layout["t"][i][0], p.layout["t"][i][1]
+                coded.add(off)
+                if dev is win.buf:
+                    win.add((off, off + nb), outs[k])
+                else:                             # a second shard's (not in the QR coder's seed buffer)
+                    win.dev[(off, off + nb)] = dev[outs[k]:outs[k] + nb]
+        win = win or _DevBase()
+        others = [bt for o, bt in bts.items() if o not in coded]
         if others:                                # the uncoded ones (norms, ...): one upload
             at, n = [], 0
             for bt in others:
                 at.append(n); n += -(-bt.nbytes // 256) * 256
             host = np.empty(n, np.uint8)
             for bt, p in zip(others, at):
-                host[p:p + bt.nbytes] = rt.outside(bt.offset, bt.offset + bt.nbytes)
+                s0, part = parts[bisect.bisect_right([a for a, _ in parts], bt.offset) - 1]
+                host[p:p + bt.nbytes] = part.outside(bt.offset - s0, bt.offset - s0 + bt.nbytes)
             dev2 = gpu2.h2d(host)
             for bt, p in zip(others, at):
                 win.dev[(bt.offset, bt.offset + bt.nbytes)] = dev2[p:p + bt.nbytes]
@@ -1470,18 +1583,19 @@ class M28RepoGPU:
 
     @staticmethod
     def _window_read(path, by_name, names):
-        """the base tensors `names` read from the base file -> (host bytes, {(offset, end): position})"""
+        """the base tensors `names` read from the base file (or a split model's shards, see _seg)
+        -> (host bytes, {(offset, end): position})"""
         bts = sorted({by_name[n].offset: by_name[n] for n in names}.values(), key=lambda t: t.offset)
-        ranges = []                               # neighbouring tensors read in one go
+        ranges = []                               # neighbouring tensors (of one file) read in one go
         for bt in bts:
-            if ranges and ranges[-1][1] == bt.offset:
+            if ranges and ranges[-1][1] == bt.offset and _seg(path, bt.offset)[0] == _seg(path, ranges[-1][0])[0]:
                 ranges[-1][1] = bt.offset + bt.nbytes
             else:
                 ranges.append([bt.offset, bt.offset + bt.nbytes])
         host = np.empty(sum(z - a for a, z in ranges), np.uint8)
         where, o = {}, 0
         for a, z in ranges:
-            _read_range(path, a, z - a, host[o:o + z - a])
+            _read_range(*_seg(path, a), z - a, host[o:o + z - a])
             where[a] = o; o += z - a
         pos, k = {}, 0
         for bt in bts:
@@ -1681,6 +1795,7 @@ class M28RepoGPU:
     def _stream_decode(self, b, rt, order, wins, gf, sink, want):
         """decode the files gf (from _stream_plan) of big base b window by window. The next
         window's coded tensors and the files' next residual spans are read in the background"""
+        self._use(b)
         outs = [_out_stream(sink, m["name"], m["size"]) if want(m["name"]) else None for _, m, *_ in gf]
         plans = [{e[0]: e for e in m["plan"]} for _, m, *_ in gf]
         jobs, pos = [], [0] * len(gf)         # (file, span start, span end) in processing order
@@ -1836,6 +1951,10 @@ class M28RepoGPU:
         reader = src if hasattr(src, "read_at") else None
         get = reader.get if reader is not None else src if callable(src) else unpack(src).__getitem__
         manifest = self.manifest_of(get)
+        needs = manifest.get("needs")
+        if needs and tuple(map(int, needs.split("."))) > tuple(map(int, __version__.split(".")[:3])):
+            raise ValueError(f"this archive needs SeedPack {needs} or newer (this is {__version__}): "
+                             "pip install -U seedpack")
         want = (lambda n: True) if select is None else (lambda n: n in select)
         mf = manifest["files"]
         sel = {i for i, m in enumerate(mf) if want(m["name"])}
@@ -1852,23 +1971,33 @@ class M28RepoGPU:
                     last_use[tuple(e[2])] = max(last_use.get(tuple(e[2]), -1), i)
         need = {i for i, n in enumerate(manifest["bases"]) if want(n)} | \
                {m["base"] for _, m in files if m["base"] is not None}
+        nb = len(manifest["bases"])           # base nb + k: split model k, its shards joined (_join)
+        joined = manifest.get("joined", [])
+        shards = {i for k, g in enumerate(joined) if nb + k in need for i, _ in g["parts"]}
+        # a split model too big for the GPU is streamed: all its shards random-access, even small ones
+        streamed_shards = {i for k, g in enumerate(joined) if nb + k in need and not _fits_gpu(g["size"])
+                           for i, _ in g["parts"]}
+        phys = sorted({i for i in need if i < nb} | shards)
         bases = []
         seeds = set(manifest.get("seeds", []))
         big = {}                              # R2 bases too big for the GPU -> R2Tensors
         if reader is not None:
-            for i in sorted(need):
+            for i in phys:
                 if manifest["bases"][i] not in seeds:
                     rt = _r2_tensors(reader, f"b{i}")
-                    if rt is not None and not _fits_gpu(rt.size):
+                    if rt is not None and (not _fits_gpu(rt.size) or i in streamed_shards):
                         big[i] = rt
         # the residuals' zstd dictionaries are the bases' headers, decoded first (cheap), so the
         # residuals decompress on the CPU while the bases decode on the GPU
-        base_buf = {i: get(f"b{i}") for i in sorted(need) if i not in big}
+        base_buf = {i: get(f"b{i}") for i in phys if i not in big}
         zdicts = {}
-        for i in need:
+        for i in phys:
             h = self._rt_header(big[i]) if i in big else self._base_header(base_buf[i], manifest["bases"][i] in seeds)
             if h is not None:
                 zdicts[i] = zstandard.ZstdCompressionDict(h, dict_type=zstandard.DICT_TYPE_RAWCONTENT)
+        for k, g in enumerate(joined):
+            if nb + k in need and g["parts"][0][0] in zdicts:
+                zdicts[nb + k] = zdicts[g["parts"][0][0]]
 
         def zd(i):
             m = manifest["files"][i]
@@ -1887,10 +2016,10 @@ class M28RepoGPU:
                 nxt[ahead] = zp.submit(zd, files[ahead][0])
                 ahead += 1
         for i, name in enumerate(manifest["bases"]):
-            if i not in need:
+            if i not in phys:
                 bases.append(None)
                 continue
-            predicts = any(m["base"] == i for _, m in files)
+            predicts = any(m["base"] == i for _, m in files) or i in shards
             if i in big:                      # streamed: decoded window by window, here or below
                 if want(name):
                     out = _out_stream(sink, name, big[i].size)
@@ -1930,10 +2059,21 @@ class M28RepoGPU:
             return
         if any(m["base"] is not None for _, m in files):
             self._setup(bases, self._imatrix(ex))
+            self._join(joined)
             if all(len(e) > 3 for _, m in files for e in m["plan"]):     # archives that record the types
                 self._expect((e[0], e[3], e[2]) for _, m in files for e in m["plan"] if e[1] != "dup")
         sources = {k[0] for k in last_use}      # files holding tensors that others copy: not streamed
-        for b, rt in big.items():
+        streams = dict(big)
+        for k, g in enumerate(joined):
+            if nb + k in need and all(i in big for i, _ in g["parts"]):
+                streams[nb + k] = _Joined([(s, big[i]) for i, s in g["parts"]])
+
+        def whole(i):
+            """base i decoded whole (into a temporary file when the GPU has no room for it)"""
+            data = self.base_codec.decompress_host(unpack(memoryview(get(f"b{i}"))), alloc=self._base_alloc)
+            return _keep_base(data)[1]
+
+        for b, rt in streams.items():
             mine = [(i, m) for i, m in files if m["base"] == b and i not in sources]
             groups, rejected = self._stream_plan(reader, b, mine, zdicts.get(b))
             for order, wins, gf in groups:
@@ -1946,10 +2086,8 @@ class M28RepoGPU:
             if any(m["base"] == b and m["plan"] for _, m in files):
                 # files of an older archive that cannot be streamed: the whole base, decoded into a
                 # temporary file, as before
-                data = self.base_codec.decompress_host(unpack(memoryview(get(f"b{b}"))), alloc=self._base_alloc)
-                hdr, dev = _keep_base(data)
+                dev = _Joined([(s, whole(i)) for i, s in joined[b - nb]["parts"]]) if b >= nb else whole(b)
                 self.bases[b] = self.bases[b][:1] + (dev,) + self.bases[b][2:]
-                del data
         if not files:
             zp.shutdown()
             self.bases = self.base_dev = None
@@ -1959,7 +2097,8 @@ class M28RepoGPU:
         typed = all(len(e) > 3 for _, m in files for e in m["plan"])
         # bases in host memory (a big model): a file's predictions are XOR-ed in as they come,
         # not held whole one file ahead
-        stream = any(b is not None and isinstance(b[1], _HostBase) for b in self.bases or [])
+        stream = any(b is not None and (isinstance(b[1], _HostBase) or getattr(b[1], "lazy", False))
+                     for b in self.bases or [])
 
         def preds(i):
             """the predictions of file i, from the manifest alone (no need for its residual), so the
