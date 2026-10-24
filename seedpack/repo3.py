@@ -96,15 +96,74 @@ def _mem():
             f" pool {cp.get_default_memory_pool().used_bytes() / 1e9:.1f}/{cp.get_default_memory_pool().total_bytes() / 1e9:.1f} GB]")
 
 
+def _map_file(path):
+    """the file's read-only mapping: its pages come from the OS cache, not the commit charge"""
+    import mmap
+    with open(path, "rb") as f:
+        return mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
+
+
+GPU_RESERVE = 5 << 30                     # device bytes the bases leave free for the rest of the work
+
+
+def _dev_free():
+    """device bytes free for new arrays (CuPy's cached free blocks included)"""
+    return cp.cuda.runtime.memGetInfo()[0] + cp.get_default_memory_pool().free_bytes()
+
+
+def _fits_gpu(n):
+    """whether a base of n bytes is kept whole on the GPU (VARC_BASE_GPU_MAX_MB caps it, for tests)"""
+    cap = os.environ.get("VARC_BASE_GPU_MAX_MB")
+    return n + GPU_RESERVE <= _dev_free() and (cap is None or n <= int(cap) << 20)
+
+
+class _HostBase:
+    """a base too large for the GPU, sliced as the GPU code slices a device copy (base[a:b] ->
+    device array): kept in host memory (when packing, the file's mapping) and uploaded per tensor.
+    Uploaded tensors stay on the GPU while it has room, from the first used on: every file is
+    predicted in the same tensor order, so a fixed set is reused where a least recently used one
+    would always miss"""
+
+    def __init__(self, host):
+        self.host = np.frombuffer(host, np.uint8)
+        self.dev = {}
+
+    def __len__(self):
+        return len(self.host)
+
+    def __getitem__(self, s):
+        a = self.dev.get((s.start, s.stop))
+        if a is None:
+            a = cp.asarray(self.host[s])
+            if _dev_free() - a.nbytes > GPU_RESERVE:
+                self.dev[(s.start, s.stop)] = a
+        return a
+
+
+class _Upload:
+    """a tensor of a base kept in host memory, as a quantiser input: uploaded only when its launch
+    converts it to float32, so a launch's tensors are not all on the GPU twice"""
+
+    def __init__(self, get, size):
+        self.get, self.size = get, size
+
+    def into(self, out):
+        gpuquant._to_f32_into(self.get(), out)
+
+
 def _keep_base(data, chunk=256 << 20):
-    """(header bytes, file on the GPU): uploaded in chunks, so no whole-file staging copy"""
+    """(header bytes, the file as the GPU code reads it): on the GPU, uploaded in chunks (no
+    whole-file staging copy), or a _HostBase when the GPU has no room for it"""
+    mv = memoryview(data).cast("B")
+    head = bytes(mv[:GGUF.from_bytes(mv, light=True).data_start])
+    del mv
+    if not _fits_gpu(len(data)):
+        return head, _HostBase(data)
     dev = cp.empty(len(data), cp.uint8)
     host = np.frombuffer(data, np.uint8)
     for o in range(0, len(data), chunk):
         dev[o:o + chunk] = cp.asarray(host[o:o + chunk])
-    mv = memoryview(data).cast("B")
-    hdr = GGUF.from_bytes(mv, light=True).data_start
-    return bytes(mv[:hdr]), dev
+    return head, dev
 
 
 PINNED_KEEP = 2 << 30                     # pinned bytes handed out before the pinned pool is emptied
@@ -259,8 +318,15 @@ class M28RepoGPU:
         common = [len(names & b[2].keys()) if b else 0 for b in self.bases]
         return max(range(len(common)), key=common.__getitem__) if common and max(common) else None
 
-    def _src(self, bt):
-        a = self.base_dev[bt.offset:bt.offset + bt.nbytes]
+    def _src(self, bt, lazy=False):
+        """base tensor bt as the quantisers take it; lazy, from a base in host memory: a _Upload"""
+        dev = self.base_dev
+        if lazy and isinstance(dev, _HostBase):
+            return _Upload(lambda: self._view(dev, bt), int(np.prod(bt.shape)))
+        return self._view(dev, bt)
+
+    def _view(self, dev, bt):
+        a = dev[bt.offset:bt.offset + bt.nbytes]
         if bt.type in QFUN:                   # a seed (quantised base): dequantised when used
             return _Dequant(self.gq, bt, a)
         return a.view(cp.uint16) if bt.type == BF16 else a.view(cp.float16) if bt.type == F16 else a.view(cp.float32)
@@ -304,6 +370,27 @@ class M28RepoGPU:
         self._use(b)
         self._predict(wanted, lambda key, p: out.__setitem__(key[0], p))
 
+    def _predict_xor(self, b, plan, tens, view, qr_buf):
+        """decoding a file (`view`, its residual) without holding its predictions: each is XOR-ed
+        in as soon as it is ready; only the QR tensors' are kept, for their decoder (qr_buf() ->
+        the file's QR chunk)"""
+        self._use(b)
+        isqr = {e[0] for e in plan if e[1] == "qr"}
+        held, jobs = {}, []
+
+        def xor(n, p):
+            t = tens[n]
+            jobs.extend(_xor_async(view[t.offset:t.offset + t.nbytes], p, check=False))
+
+        self._predict([(tens[e[0]], e[2]) for e in plan],
+                      lambda key, p: held.__setitem__(key[0], p) if key[0] in isqr else xor(key[0], p))
+        if held:
+            self._qr_decode(qr_buf(), held)
+            for n, p in held.items():
+                xor(n, p)
+        for f in jobs:
+            f.result()
+
     def _expect(self, keys):
         """keys: every (name, type, variant) the coming files will predict, repeats included. The
         cache then keeps a prediction only while it has a later use, dropping it after the last"""
@@ -321,6 +408,8 @@ class M28RepoGPU:
             self.cached -= hit.nbytes
         return False
 
+    FLOAT_BATCH = 256 << 20                   # base bytes of float tensors converted in one go
+
     def _predict(self, wanted, use):
         """wanted: list of (tensor, variant); use((name, type, variant), bytes as numpy uint8) is
         called as soon as each prediction is ready, so a file's predictions are never all held"""
@@ -335,9 +424,15 @@ class M28RepoGPU:
                 floats.append(key)
             else:
                 todo.setdefault((t.type, v), {})[key] = t
-        for i in range(0, len(floats), 512):
-            # float tensors (norms, ...) are small and many: converted together, one download
-            keys = floats[i:i + 512]
+        groups, nb = [[]], 0
+        for key in floats:
+            # float tensors (norms, ...) are small and many: converted together, one download per
+            # group of at most 512 tensors and FLOAT_BATCH base bytes (an F16/F32 file has big ones)
+            b = self.by_name[key[0]].nbytes
+            if groups[-1] and (len(groups[-1]) == 512 or nb + b > self.FLOAT_BATCH):
+                groups.append([]); nb = 0
+            groups[-1].append(key); nb += b
+        for keys in groups if floats else []:
             ys = [self._float_dev(self.by_name[n], ty) for n, ty, _ in keys]
             host = to_host(cp.concatenate(ys)) if len(ys) > 1 else to_host(ys[0])
             o = 0
@@ -356,7 +451,7 @@ class M28RepoGPU:
                     self.cache[(self.b,) + keys[i]] = o.copy(); self.cached += o.nbytes
                 use(keys[i], o)
 
-            srcs = [(self._src(self.by_name[n]), ts[(n, ty, v)].shape[0]) for n, _, _ in keys]
+            srcs = [(self._src(self.by_name[n], lazy=True), ts[(n, ty, v)].shape[0]) for n, _, _ in keys]
             # variant v: the quantiser's code variant v % UNIT_W, with unit weights from UNIT_W
             ims = [self.imatrix.get(n) if v < UNIT_W else np.ones(ts[(n, ty, v)].shape[0], np.float32)
                    for n, _, _ in keys]
@@ -371,6 +466,21 @@ class M28RepoGPU:
         return self.USE_QR and t.type in qr.QR_TYPES and bt is not None and bt.type in qr.SEED_TYPES \
             and int(np.prod(bt.shape)) == int(np.prod(t.shape))
 
+    def _seed_dev(self, names):
+        """(device array, {name: byte offset}) holding base tensors `names` for the QR coder: the
+        base itself when it is on the GPU, else just those tensors, gathered"""
+        if not isinstance(self.base_dev, _HostBase):
+            return self.base_dev, {n: self.by_name[n].offset for n in names}
+        off, o = {}, 0
+        for n in names:
+            off[n] = o
+            o += -(-self.by_name[n].nbytes // 256) * 256
+        seed = cp.empty(max(o, 1), cp.uint8)
+        for n in names:
+            bt = self.by_name[n]
+            seed[off[n]:off[n] + bt.nbytes] = self.base_dev[bt.offset:bt.offset + bt.nbytes]
+        return seed, off
+
     def _qr_encode(self, items):
         """[(tensor, file bytes, prediction)] -> the file's QR chunk; the regions are zeroed"""
         by = {}
@@ -380,9 +490,11 @@ class M28RepoGPU:
         for T, ts in by.items():
             for bi in qr.batches(T, [t.nbytes for t, _, _ in ts]):
                 its = [ts[i] for i in bi]
+                seed, off = self._seed_dev([t.name for t, _, _ in its])
                 parts[str(len(meta))] = qr.encode(
-                    T, [(f, p, self.by_name[t.name].offset, self.by_name[t.name].type) for t, f, p in its], self.base_dev)
+                    T, [(f, p, off[t.name], self.by_name[t.name].type) for t, f, p in its], seed)
                 meta.append([T, [t.name for t, _, _ in its]])
+                del seed
         for _, f, _ in items:
             f[:] = 0
         self.stats["qr"] = self.stats.get("qr", 0) + len(items)
@@ -394,8 +506,9 @@ class M28RepoGPU:
         (their residual regions are zero, so the caller's XOR writes them)"""
         ch = unpack(buf)
         for k, (T, names) in enumerate(json.loads(zstd_d(ch["meta"]))):
-            out = qr.decode(T, ch[str(k)], [(pred[n], self.by_name[n].offset, self.by_name[n].type) for n in names],
-                            self.base_dev)
+            seed, off = self._seed_dev(names)
+            out = qr.decode(T, ch[str(k)], [(pred[n], off[n], self.by_name[n].type) for n in names], seed)
+            del seed
             host = to_host(out)
             o = 0
             for n in names:
@@ -637,7 +750,9 @@ class M28RepoGPU:
             return c
 
         for i, (name, path) in enumerate(bases.items()):
-            data = _read_file(path)
+            # a base the GPU has no room for is read through the file's mapping: the per-tensor
+            # uploads then come from the page cache, at no commit charge
+            data = _read_file(path) if _fits_gpu(os.path.getsize(path)) else _map_file(path)
             seen(name, data)
             kept.append(_keep_base(data))
             base_jobs.append(bp.submit(code_base, name, data))
@@ -694,6 +809,16 @@ class M28RepoGPU:
                 put(f"f{k}", c)
                 self.sizes[names[k]] = len(c)
 
+        def put_bases(wait=False):
+            """the coded bases out as soon as they are ready (a big model's is gigabytes)"""
+            for i, name in enumerate(bases):
+                if base_jobs[i] is not None and (wait or base_jobs[i].done()):
+                    c = base_jobs[i].result()
+                    base_jobs[i] = None
+                    put(f"b{i}", c)
+                    self.sizes[name] = len(c)
+                    del c
+
         # pipelined: the next file is read and older residuals are compressed while the GPU
         # predicts the current one, as long as the files held stay within self.inflight bytes
         with ThreadPoolExecutor(3) as zp:
@@ -720,15 +845,13 @@ class M28RepoGPU:
                 manifest["files"].append(entry)
                 pending.append((i, job, len(data)))
                 del data, c
+                put_bases()
                 if self.verbose:
                     src = list(bases)[b] if b is not None else "no base: " + ("M21" if "codec" in entry else "zstd only")
                     print(f"  {name}: {fsize[i]:,} B (from {src}){_mem()}", flush=True)
             drain(0)
         rd.shutdown()
-        for i, (name, job) in enumerate(zip(bases, base_jobs)):
-            c = job.result()
-            put(f"b{i}", c)
-            self.sizes[name] = len(c)
+        put_bases(wait=True)
         bp.shutdown()
         put("manifest", zstd_c(json.dumps(manifest).encode()))
         self.bases = self.base_dev = None
@@ -829,6 +952,9 @@ class M28RepoGPU:
                 self._expect((e[0], e[3], e[2]) for _, m in files for e in m["plan"] if e[1] != "dup")
 
         typed = all(len(e) > 3 for _, m in files for e in m["plan"])
+        # bases in host memory (a big model): a file's predictions are XOR-ed in as they come,
+        # not held whole one file ahead
+        stream = any(b is not None and isinstance(b[1], _HostBase) for b in self.bases or [])
 
         def preds(i):
             """the predictions of file i, from the manifest alone (no need for its residual), so the
@@ -854,7 +980,7 @@ class M28RepoGPU:
                     nxt[ahead] = zp.submit(zd, files[ahead][0])
                     ahead += 1
                 for q in (k, k + 1):
-                    if q < len(files) and q not in pf:
+                    if q < len(files) and q not in pf and not stream:
                         pf[q] = gp.submit(preds, files[q][0])
                 data = nxt.pop(k).result()
                 if m.get("codec") == "q8":
@@ -863,9 +989,12 @@ class M28RepoGPU:
                     view = np.frombuffer(data, np.uint8)
                     tens = {t.name: t for t in GGUF.from_bytes(data, light=True).tensors}
                     by_name = self.bases[m["base"]][2]
-                    pred = pf.pop(k).result()
+                    pred = pf.pop(k).result() if not stream else None
                     plan = [e for e in m["plan"] if e[1] != "dup"]
-                    if pred is None or any(tens[e[0]].shape[0] != by_name[e[0]].shape[0] for e in plan):
+                    if stream:
+                        gp.submit(self._predict_xor, m["base"], plan, tens, view, lambda: get(f"q{i}")).result()
+                        pred = {}
+                    elif pred is None or any(tens[e[0]].shape[0] != by_name[e[0]].shape[0] for e in plan):
                         # old archive (no types in the plan) or rows unlike the base's: predicted
                         # here from the file's own header
                         pred = {}
@@ -895,7 +1024,7 @@ class M28RepoGPU:
                     for f in jobs:
                         f.result()
                     del view, jobs, pred
-                else:
+                elif not stream:
                     pf.pop(k).result()
                 if want(m["name"]):
                     sink(m["name"], data)
