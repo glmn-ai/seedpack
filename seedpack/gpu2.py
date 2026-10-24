@@ -505,6 +505,18 @@ def _trim():
     cp.get_default_memory_pool().free_all_blocks()
 
 
+def h2d(a):
+    """host array -> device array by a plain synchronous copy (a device array is returned as is).
+    cupy.asarray stages a host array through a pinned buffer that CuPy's pinned pool keeps
+    afterwards: over the uploads of a big model that is gigabytes of commit charge"""
+    if isinstance(a, cp.ndarray):
+        return a
+    a = np.ascontiguousarray(a)
+    d = cp.empty(a.shape, a.dtype)
+    d.set(a)
+    return d
+
+
 class Timer:
     def __init__(self):
         import time

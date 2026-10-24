@@ -26,7 +26,7 @@ import cupy as cp
 import numpy as np
 
 from .codecs_gguf import pack, unpack, zstd_c, zstd_d
-from .gpu2 import cum_of, store_tables, load_tables
+from .gpu2 import cum_of, store_tables, load_tables, h2d
 
 QR_TYPES = {2, 3, 6, 7, 8, 10, 11, 12, 13, 14, 20, 23}
 SEED_TYPES = QR_TYPES | {0, 1, 30}
@@ -591,8 +591,8 @@ def encode(T, items, seed_dev):
     tm["seed_off"] = [it[2] for it in items]
     tm["seed_type"] = [it[3] for it in items]
     tm["cols"] = [it[4] if len(it) > 4 else 0 for it in items]
-    F = cp.concatenate([cp.asarray(it[0]) for it in items])
-    P = cp.concatenate([cp.asarray(it[1]) for it in items])
+    F = cp.concatenate([h2d(it[0]) for it in items])
+    P = cp.concatenate([h2d(it[1]) for it in items])
     tm_g, sg_g = cp.asarray(tm.view(np.uint8)), cp.asarray(sg.view(np.uint8))
     nseg = len(sg)
     counts = cp.zeros((NTAB, 256), cp.uint32)
@@ -633,7 +633,7 @@ def decode(T, buf, items, seed_dev):
     tm["seed_off"] = [it[1] for it in items]
     tm["seed_type"] = [it[2] for it in items]
     tm["cols"] = [it[3] if len(it) > 3 else 0 for it in items]
-    P = cp.concatenate([cp.asarray(it[0]) for it in items])
+    P = cp.concatenate([h2d(it[0]) for it in items])
     F = cp.zeros(nb * bs, cp.uint8)
     nseg = len(sg)
     freq_h, used_h = load_tables(ch["t"])
@@ -644,7 +644,7 @@ def decode(T, buf, items, seed_dev):
     lens = np.frombuffer(zstd_d(ch["l"]), np.uint32).astype(np.uint64)
     offs = np.zeros(nseg, np.uint64); offs[1:] = np.cumsum(lens)[:-1]
     kern("qr_dec")(((nseg + 63) // 64,), (64,),
-                   (np.int32(T), cp.asarray(np.frombuffer(ch["s"], np.uint8)), cp.asarray(offs), P, seed_dev,
+                   (np.int32(T), h2d(np.frombuffer(ch["s"], np.uint8)), cp.asarray(offs), P, seed_dev,
                     cp.asarray(tm.view(np.uint8)), cp.asarray(sg.view(np.uint8)), np.int32(nseg),
                     remap, freq, cum, lut, F))
     return F

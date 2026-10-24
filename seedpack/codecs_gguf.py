@@ -23,19 +23,34 @@ XZ_EXE = "xz"
 
 
 # ---------------------------------------------------------------- container / generic codecs
-def pack(chunks: dict) -> bytes:
+def nbytes(data) -> int:
+    """size of a bytes-like object or of a list of them (pack_parts)"""
+    if isinstance(data, list):
+        return sum(nbytes(d) for d in data)
+    return memoryview(data).nbytes
+
+
+def pack_parts(chunks: dict) -> list:
+    """pack() as a list of buffers, never joined: a value may itself be such a list (a big
+    stream in pieces), which is spliced in, so gigabytes are not copied to be framed"""
     out = [struct.pack("<I", len(chunks))]
     for name, data in chunks.items():
         nb = name.encode()
-        out += [struct.pack("<H", len(nb)), nb, struct.pack("<Q", len(data)), data]
-    return b"".join(out)
+        out += [struct.pack("<H", len(nb)), nb, struct.pack("<Q", nbytes(data))]
+        out += data if isinstance(data, list) else [data]
+    return out
+
+
+def pack(chunks: dict) -> bytes:
+    return b"".join(pack_parts(chunks))
 
 
 def unpack(buf: bytes) -> dict:
+    """-> {name: slice of buf}; with a memoryview the slices share its memory (no copies)"""
     (n,), pos, chunks = struct.unpack_from("<I", buf), 4, {}
     for _ in range(n):
         (ln,) = struct.unpack_from("<H", buf, pos); pos += 2
-        name = buf[pos:pos + ln].decode(); pos += ln
+        name = bytes(buf[pos:pos + ln]).decode(); pos += ln
         (dl,) = struct.unpack_from("<Q", buf, pos); pos += 8
         chunks[name] = buf[pos:pos + dl]; pos += dl
     return chunks

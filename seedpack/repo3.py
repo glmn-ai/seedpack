@@ -22,10 +22,10 @@ import blake3
 import numpy as np
 import zstandard
 
-from .codecs_gguf import pack, unpack, zstd_c, zstd_d
+from .codecs_gguf import nbytes, pack, pack_parts, unpack, zstd_c, zstd_d
 from .gguf_reader import GGUF
 from .gpu_bf16 import M24BF16GPU
-from . import gpuquant
+from . import gpu2, gpuquant
 from . import qr
 from .gpuquant import GPUQuant, VARIANTS, to_host
 from .repo2 import F32, F16, BF16, base_float_np, float_as_np
@@ -104,6 +104,7 @@ def _map_file(path):
 
 
 GPU_RESERVE = 5 << 30                     # device bytes the bases leave free for the rest of the work
+RESIDENT_HEADROOM = 8 << 30               # a base in host memory keeps at most (card - this) on the GPU
 
 
 def _dev_free():
@@ -126,7 +127,10 @@ class _HostBase:
 
     def __init__(self, host):
         self.host = np.frombuffer(host, np.uint8)
-        self.dev = {}
+        self.dev, self.resident = {}, 0
+        # GPU_RESERVE of free memory is not enough: the QR batches and the pool's cached blocks
+        # come on top, and an over-full card has WDDM page device memory out (10-100x slower)
+        self.limit = max(0, cp.cuda.runtime.memGetInfo()[1] - RESIDENT_HEADROOM)
 
     def __len__(self):
         return len(self.host)
@@ -134,9 +138,10 @@ class _HostBase:
     def __getitem__(self, s):
         a = self.dev.get((s.start, s.stop))
         if a is None:
-            a = cp.asarray(self.host[s])
-            if _dev_free() - a.nbytes > GPU_RESERVE:
+            a = gpu2.h2d(self.host[s])
+            if self.resident + a.nbytes <= self.limit and _dev_free() - a.nbytes > GPU_RESERVE:
                 self.dev[(s.start, s.stop)] = a
+                self.resident += a.nbytes
         return a
 
 
@@ -151,6 +156,17 @@ class _Upload:
         gpuquant._to_f32_into(self.get(), out)
 
 
+def _scratch_array(n, where=None):
+    """a writable uint8 array of n bytes backed by a temporary file in `where` (deleted once the
+    array is gone): its pages are written back to that file, so it costs no commit charge"""
+    import mmap
+    import tempfile
+    with tempfile.TemporaryFile(dir=where) as f:
+        f.truncate(n)
+        mm = mmap.mmap(f.fileno(), n)       # keeps its own handle: the file lives on with it
+    return np.frombuffer(mm, np.uint8)
+
+
 def _keep_base(data, chunk=256 << 20):
     """(header bytes, the file as the GPU code reads it): on the GPU, uploaded in chunks (no
     whole-file staging copy), or a _HostBase when the GPU has no room for it"""
@@ -162,7 +178,7 @@ def _keep_base(data, chunk=256 << 20):
     dev = cp.empty(len(data), cp.uint8)
     host = np.frombuffer(data, np.uint8)
     for o in range(0, len(data), chunk):
-        dev[o:o + chunk] = cp.asarray(host[o:o + chunk])
+        dev[o:o + chunk].set(host[o:o + chunk])
     return head, dev
 
 
@@ -372,22 +388,30 @@ class M28RepoGPU:
 
     def _predict_xor(self, b, plan, tens, view, qr_buf):
         """decoding a file (`view`, its residual) without holding its predictions: each is XOR-ed
-        in as soon as it is ready; only the QR tensors' are kept, for their decoder (qr_buf() ->
-        the file's QR chunk)"""
+        in as soon as it is ready; the QR tensors are predicted and decoded batch by batch
+        (qr_buf() -> the file's QR chunk)"""
         self._use(b)
         isqr = {e[0] for e in plan if e[1] == "qr"}
-        held, jobs = {}, []
+        jobs = []
 
         def xor(n, p):
             t = tens[n]
             jobs.extend(_xor_async(view[t.offset:t.offset + t.nbytes], p, check=False))
 
-        self._predict([(tens[e[0]], e[2]) for e in plan],
-                      lambda key, p: held.__setitem__(key[0], p) if key[0] in isqr else xor(key[0], p))
-        if held:
-            self._qr_decode(qr_buf(), held)
-            for n, p in held.items():
-                xor(n, p)
+        self._predict([(tens[e[0]], e[2]) for e in plan if e[0] not in isqr], lambda key, p: xor(key[0], p))
+        if isqr:
+            ch = unpack(qr_buf())
+            var = {e[0]: e[2] for e in plan}
+            for k, (T, names) in enumerate(json.loads(zstd_d(ch["meta"]))):
+                held = {}
+                self._predict([(tens[n], var[n]) for n in names], lambda key, p: held.__setitem__(key[0], p))
+                self._qr_decode_batch(ch, k, T, names, held)
+                for n in names:
+                    xor(n, held[n])
+                for f in jobs:                  # the batch's memory is released before the next
+                    f.result()
+                jobs.clear()
+                del held
         for f in jobs:
             f.result()
 
@@ -481,8 +505,19 @@ class M28RepoGPU:
             seed[off[n]:off[n] + bt.nbytes] = self.base_dev[bt.offset:bt.offset + bt.nbytes]
         return seed, off
 
-    def _qr_encode(self, items):
-        """[(tensor, file bytes, prediction)] -> the file's QR chunk; the regions are zeroed"""
+    def _again(self, wanted):
+        """{name: prediction} of tensors this file already predicted once ([(tensor, variant)]):
+        their expected uses are counted again first, so the cache keeps what later files need"""
+        if self.uses is not None:
+            for t, v in wanted:
+                self.uses[(t.name, t.type, v)] += 1
+        out = {}
+        self._predict(wanted, lambda key, p: out.__setitem__(key[0], p))
+        return out
+
+    def _qr_encode(self, items, choice):
+        """[(tensor, file bytes, prediction or None)] -> the file's QR chunk; the regions are
+        zeroed. A missing prediction is made again, batch by batch, with variant choice[name]"""
         by = {}
         for t, f, p in items:
             by.setdefault(t.type, []).append((t, f, p))
@@ -490,11 +525,14 @@ class M28RepoGPU:
         for T, ts in by.items():
             for bi in qr.batches(T, [t.nbytes for t, _, _ in ts]):
                 its = [ts[i] for i in bi]
+                pred = self._again([(t, choice[t.name]) for t, _, p in its if p is None])
                 seed, off = self._seed_dev([t.name for t, _, _ in its])
                 parts[str(len(meta))] = qr.encode(
-                    T, [(f, p, off[t.name], self.by_name[t.name].type) for t, f, p in its], seed)
+                    T, [(f, pred[t.name] if p is None else p, off[t.name], self.by_name[t.name].type)
+                        for t, f, p in its], seed)
                 meta.append([T, [t.name for t, _, _ in its]])
-                del seed
+                del seed, pred
+                _release()                      # a batch's temporaries must not pile up in the pool
         for _, f, _ in items:
             f[:] = 0
         self.stats["qr"] = self.stats.get("qr", 0) + len(items)
@@ -506,15 +544,20 @@ class M28RepoGPU:
         (their residual regions are zero, so the caller's XOR writes them)"""
         ch = unpack(buf)
         for k, (T, names) in enumerate(json.loads(zstd_d(ch["meta"]))):
-            seed, off = self._seed_dev(names)
-            out = qr.decode(T, ch[str(k)], [(pred[n], off[n], self.by_name[n].type) for n in names], seed)
-            del seed
-            host = to_host(out)
-            o = 0
-            for n in names:
-                sz = len(pred[n])
-                pred[n] = host[o:o + sz]; o += sz
-            del out
+            self._qr_decode_batch(ch, k, T, names, pred)
+
+    def _qr_decode_batch(self, ch, k, T, names, pred):
+        """batch k of an unpacked QR chunk: pred[n] (the predictions of `names`) -> the tensors"""
+        seed, off = self._seed_dev(names)
+        out = qr.decode(T, ch[str(k)], [(pred[n], off[n], self.by_name[n].type) for n in names], seed)
+        del seed
+        host = to_host(out)
+        o = 0
+        for n in names:
+            sz = len(pred[n])
+            pred[n] = host[o:o + sz]; o += sz
+        del out
+        _release()
 
     # ------------------------------------------------------------------ duplicate tensors
     DUP_MIN = 64 << 10                        # smaller tensors are not worth a reference
@@ -576,18 +619,22 @@ class M28RepoGPU:
                 out += list(range(nv + 1))
             return out
 
+        # the QR coder needs the QR tensors' predictions: kept when the system can commit about
+        # the file's size once more, else predicted again batch by batch (_qr_encode)
+        free = _commit_free()
+        keep_qr = free is None or free - len(data) > LOW_COMMIT
+
         def xor0(key, p):
             if key[0] in isqr:
                 nonzero[key[0]] = _diff_async(regions[key[0]], p)
-                p0[key[0]] = p
-                return
-            nonzero[key[0]] = _xor_async(regions[key[0]], p)
-            if cands(tens[key[0]]):
-                p0[key[0]] = p                  # kept to try the alternatives below
+            else:
+                nonzero[key[0]] = _xor_async(regions[key[0]], p)
+            if cands(tens[key[0]]) or (keep_qr and key[0] in isqr):
+                p0[key[0]] = p                  # kept for the alternatives below / the QR coder
 
         self._predict([(t, v0[t.name]) for t, _ in ts], xor0)
         nonzero = {n: _nonzero(f) for n, f in nonzero.items()}
-        p0 = {n: p for n, p in p0.items() if nonzero[n] or n in isqr}
+        p0 = {n: p for n, p in p0.items() if nonzero[n]}
         choice = dict(v0)
         retry = [t for t, k in ts if k == "rq" and nonzero[t.name] and cands(t)]
         if retry:
@@ -622,7 +669,7 @@ class M28RepoGPU:
         for n in [n for n in isqr if not nonzero[n]]:
             isqr.discard(n)
             regions[n][:] = 0                   # file == prediction: the XOR residual
-        self._qr_chunk = self._qr_encode([(tens[n], regions[n], p0[n]) for n in isqr]) if isqr else None
+        self._qr_chunk = self._qr_encode([(tens[n], regions[n], p0.get(n)) for n in isqr], choice) if isqr else None
         plan = []
         for t, k in ts:
             v = choice[t.name]
@@ -668,7 +715,7 @@ class M28RepoGPU:
     def _base_header(buf, is_seed):
         """GGUF header bytes of a base from its archived chunk (its 'rest' part only), or None"""
         try:
-            ch = unpack(buf)
+            ch = unpack(memoryview(buf))        # views: the gigabytes of the stream are not copied
             if is_seed:
                 from .gpu2 import GPU2
                 rest = GPU2._header_d(ch["rest"])
@@ -732,8 +779,11 @@ class M28RepoGPU:
         names = list(files)
         fsize = [os.path.getsize(files[n]) for n in names]
         rd = ThreadPoolExecutor(1)
+        # a base too big for the GPU is a big model: its coding (output and buffers of gigabytes)
+        # is finished before the derived files are read, not overlapped with them
+        huge = any(not _fits_gpu(os.path.getsize(p)) for p in bases.values())
         # the first derived file is read while the bases are coded
-        reads = {0: rd.submit(read, names[0])} if names else {}
+        reads = {0: rd.submit(read, names[0])} if names and not huge else {}
         kept = []
         # the bases are coded in the background: the derived files only need their GPU copy
         bp = ThreadPoolExecutor(1)
@@ -743,10 +793,10 @@ class M28RepoGPU:
             if name in self.seed_files:
                 c = SeedCodec().compress(data)
             else:
-                c = pack(self.base_codec.compress_dev(data))
+                c = pack_parts(self.base_codec.compress_dev(data))   # pieces: never joined
             if self.verbose:
                 kind = "seed" if name in self.seed_files else "base"
-                print(f"  {name}: {len(data):,} -> {len(c):,} B ({kind}){_mem()}", flush=True)
+                print(f"  {name}: {len(data):,} -> {nbytes(c):,} B ({kind}){_mem()}", flush=True)
             return c
 
         for i, (name, path) in enumerate(bases.items()):
@@ -816,18 +866,26 @@ class M28RepoGPU:
                     c = base_jobs[i].result()
                     base_jobs[i] = None
                     put(f"b{i}", c)
-                    self.sizes[name] = len(c)
+                    self.sizes[name] = nbytes(c)
                     del c
+
+        if huge:
+            put_bases(wait=True)                # its coded form out of memory before the files
 
         # pipelined: the next file is read and older residuals are compressed while the GPU
         # predicts the current one, as long as the files held stay within self.inflight bytes
+        # and the system can commit them
         with ThreadPoolExecutor(3) as zp:
             for i, name in enumerate(names):
+                if i not in reads:              # not read ahead
+                    reads[i] = rd.submit(read, name)
                 data = reads.pop(i).result()
                 if i + 1 < len(names):
                     # the next file is read while this one is predicted and XOR-ed
                     drain(max(0, self.inflight - fsize[i] - fsize[i + 1]))
-                    reads[i + 1] = rd.submit(read, names[i + 1])
+                    free = _commit_free()
+                    if free is None or free - fsize[i] - fsize[i + 1] > LOW_COMMIT:
+                        reads[i + 1] = rd.submit(read, names[i + 1])
                 plan, b = self._residual(data, fi=len(manifest["files"]))
                 if self._qr_chunk is not None:
                     put(f"q{len(manifest['files'])}", self._qr_chunk)
@@ -845,7 +903,6 @@ class M28RepoGPU:
                 manifest["files"].append(entry)
                 pending.append((i, job, len(data)))
                 del data, c
-                put_bases()
                 if self.verbose:
                     src = list(bases)[b] if b is not None else "no base: " + ("M21" if "codec" in entry else "zstd only")
                     print(f"  {name}: {fsize[i]:,} B (from {src}){_mem()}", flush=True)
@@ -859,6 +916,13 @@ class M28RepoGPU:
         return pack(ch) if collect else None
 
     # ------------------------------------------------------------------ decompression
+    scratch = None                            # directory for _scratch_array (None: the system's temp)
+
+    def _base_alloc(self, n):
+        """output buffer of a decoded base: memory when it fits on the GPU, else a temporary
+        file's mapping (a big model's base would otherwise take its size in RAM + page file)"""
+        return np.empty(n, np.uint8) if _fits_gpu(n) else _scratch_array(n, self.scratch)
+
     @staticmethod
     def manifest_of(get):
         return json.loads(zstd_d(get("manifest")))
@@ -922,7 +986,7 @@ class M28RepoGPU:
                 data = SeedCodec().decompress(buf)
                 kept = _keep_base(data) if predicts else None
             elif hasattr(self.base_codec, "decompress_host"):
-                data = self.base_codec.decompress_host(unpack(buf))
+                data = self.base_codec.decompress_host(unpack(memoryview(buf)), alloc=self._base_alloc)
                 kept = _keep_base(data) if predicts else None
             else:
                 dev = self.base_codec.decompress_dev(unpack(buf))
@@ -1043,13 +1107,13 @@ class R2Base:
         self.c = BF16v2(budget=budget)
 
     def compress_dev(self, data, dev=None):
-        return {"r2": self.c.compress(data)}
+        return {"r2": self.c.compress_parts(data)}
 
     def decompress_dev(self, ch):
         return cp.asarray(self.c.decompress(ch["r2"]))
 
-    def decompress_host(self, ch):
-        return self.c.decompress(ch["r2"])
+    def decompress_host(self, ch, alloc=None):
+        return self.c.decompress(ch["r2"], alloc=alloc)
 
 
 class M29RepoGPU(M28RepoGPU):

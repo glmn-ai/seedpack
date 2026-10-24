@@ -336,6 +336,10 @@ def _extract(a, outdir):
             fail(f"{len(clash)} file(s) already exist in {outdir}, e.g. {clash[0]} (use --force to overwrite)")
     cls = M28RepoGPU if meta["method"].startswith("M28") else M29RepoGPU
     m = cls(cache_bytes=cache_bytes(a.cache))
+    # a base too big for the GPU is decoded into a temporary file: next to the output (or the
+    # archive), where there is room for the model anyway, not in the system's temp directory
+    m.scratch = os.environ.get("SEEDPACK_TMP") or outdir or os.path.dirname(os.path.abspath(r.path))
+    os.makedirs(m.scratch, exist_ok=True)
     out = Output(meta["files"], meta["hash"], outdir)
     t0 = time.perf_counter()
     try:

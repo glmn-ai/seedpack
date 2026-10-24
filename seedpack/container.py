@@ -49,8 +49,13 @@ class Writer:
             self.jobs.popleft().result()          # raises a write error early
 
     def _write(self, name, data):
-        self.chunks[name] = [self.f.tell(), len(data), zlib.crc32(data)]
-        self.f.write(data)
+        """data: bytes-like, or a list of them written back to back (a chunk in pieces)"""
+        off, n, crc = self.f.tell(), 0, 0
+        for part in data if isinstance(data, list) else [data]:
+            crc = zlib.crc32(part, crc)
+            n += memoryview(part).nbytes
+            self.f.write(part)
+        self.chunks[name] = [off, n, crc]
 
     def close(self, meta):
         while self.jobs:

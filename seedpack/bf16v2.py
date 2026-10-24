@@ -18,9 +18,9 @@ import cupy as cp
 import numpy as np
 
 
-from .codecs_gguf import pack, unpack, zstd_c, zstd_d
+from .codecs_gguf import pack, pack_parts, unpack, zstd_c, zstd_d
 from .gguf_reader import GGUF, GGML_BF16
-from .gpu2 import normalize_gpu, cum_of, store_tables, load_tables, Timer, GPU2
+from .gpu2 import normalize_gpu, cum_of, store_tables, load_tables, Timer, GPU2, h2d, _trim
 PB = 15                   # probability resolution (M24: 12); +0.25 MB gain, see pb_study.py
 from .gpu_bf16 import M24BF16GPU
 
@@ -270,6 +270,10 @@ class BF16v2:
         return np.flatnonzero(~isdup).astype(np.int32), sorted(pairs)
 
     def compress(self, data):
+        return b"".join(self.compress_parts(data))
+
+    def compress_parts(self, data):
+        """compress() as pack_parts' list: the coded stream (most of the output) stays in pieces"""
         ev = Timer()
         g = GGUF.from_bytes(data)
         layout = self._layout(g, len(data))
@@ -287,7 +291,7 @@ class BF16v2:
         # pass 1: statistics, duplicate rows, histograms
         for gi, grp in enumerate(groups):
             a, b = layout["t"][grp[0]][0], layout["t"][grp[-1]][0] + layout["t"][grp[-1]][1]
-            dev = cp.asarray(host[a:b])
+            dev = h2d(host[a:b])
             rmap_off = {}
             for i in grp:
                 off, nb, rl, _ = layout["t"][i]
@@ -305,15 +309,17 @@ class BF16v2:
             devs[gi] = (dev, a) if resident else (None, a)
         rfi = cp.concatenate(rfi_l); cfi = cp.concatenate(cfi_l); scl = cp.concatenate(scl_l)
         rowmap = cp.asarray(np.concatenate(rmap_all)) if rmap_all else cp.zeros(1, cp.int32)
+        _trim()
         ev("statistics + dedup")
         for gi, grp in enumerate(groups):
             dev, a = devs[gi]
             if dev is None:
-                b = layout["t"][grp[-1]][0] + layout["t"][grp[-1]][1]; dev = cp.asarray(host[a:b])
+                b = layout["t"][grp[-1]][0] + layout["t"][grp[-1]][1]; dev = h2d(host[a:b])
             tb, sg = plans[gi]
             kern("v2_hist")(((len(sg) + 63) // 64,), (64,),
                             (dev, cp.asarray(tb.view(np.uint8)), cp.asarray(sg.view(np.uint8)), np.int32(len(sg)),
                              rfi, cfi, scl, rowmap, counts))
+        _trim()
         ev("histogram")
         self.last_counts = counts.get()
         freq, used = normalize_gpu(counts, 1 << PB)
@@ -324,7 +330,7 @@ class BF16v2:
         for gi, grp in enumerate(groups):
             dev, a = devs[gi]
             if dev is None:
-                b = layout["t"][grp[-1]][0] + layout["t"][grp[-1]][1]; dev = cp.asarray(host[a:b])
+                b = layout["t"][grp[-1]][0] + layout["t"][grp[-1]][1]; dev = h2d(host[a:b])
             tb, sg = plans[gi]
             out = cp.empty(len(sg) * cap, cp.uint8); out_len = cp.zeros(len(sg), cp.uint32)
             kern("v2_enc")(((len(sg) + 63) // 64,), (64,),
@@ -336,9 +342,10 @@ class BF16v2:
             offs = cp.zeros(len(sg) + 1, cp.uint64); offs[1:] = cp.cumsum(out_len.astype(cp.uint64))
             dst = cp.empty(int(offs[-1]), cp.uint8)
             _g2.kern("gather")((len(sg),), (256,), (out, np.uint64(cap), out_len, offs, np.int32(len(sg)), dst))
-            streams.append(dst.get().tobytes()); lens_all.append(lens)
+            streams.append(dst.get()); lens_all.append(lens)
             del out, dst
             devs[gi] = None
+        _trim()
         ev("encode")
         dups = [[i, r, s] for i, ps in dup_pairs.items() for r, s in ps]
         meta = dict(layout=layout, dups=dups, nrows_c=[nrows_c[i] for i in range(nt)])
@@ -347,17 +354,18 @@ class BF16v2:
             "side": zstd_c(rfi.get().tobytes() + cfi.get().tobytes() + scl.get().tobytes(), 19),
             "tables": store_tables(freq, used),
             "lens": zstd_c(np.concatenate(lens_all).astype(np.uint32).tobytes()),
-            "stream": b"".join(streams),
+            "stream": streams,
             "rest": hdr_job.result(),
         }
         ev("header")
         self.timing["compress"] = ev.parts
-        return pack(ch)
+        return pack_parts(ch)
 
     # ---------------------------------------------------------------- decompression
-    def decompress(self, buf):
+    def decompress(self, buf, alloc=None):
+        """alloc(n) -> writable uint8 array of n bytes for the output (default: np.empty)"""
         ev = Timer()
-        ch = unpack(buf)
+        ch = unpack(buf if isinstance(buf, memoryview) else memoryview(buf))   # no copy of the stream
         meta = json.loads(zstd_d(ch["meta"]))
         layout = meta["layout"]; nt = len(layout["t"])
         hdr_job = ThreadPoolExecutor(1).submit(M24BF16GPU._header_d, ch["rest"])
@@ -384,7 +392,7 @@ class BF16v2:
                 isdup = np.zeros(nr, bool); isdup[[r for r, _ in dups[i]]] = True
                 rmap_off_t[i] = sum(len(x) for x in rmap_all); rmap_all.append(np.flatnonzero(~isdup).astype(np.int32))
         rowmap = cp.asarray(np.concatenate(rmap_all)) if rmap_all else cp.zeros(1, cp.int32)
-        out = np.empty(layout["size"], np.uint8)
+        out = alloc(layout["size"]) if alloc else np.empty(layout["size"], np.uint8)
         stream_h = np.frombuffer(ch["stream"], np.uint8)
         ev("unpack")
         spos, lpos = 0, 0
@@ -397,7 +405,7 @@ class BF16v2:
             a = layout["t"][grp[0]][0]; b = layout["t"][grp[-1]][0] + layout["t"][grp[-1]][1]
             dev = cp.empty(b - a, cp.uint8)
             kern("v2_dec")(((len(sg) + 63) // 64,), (64,),
-                           (cp.asarray(stream_h[spos:spos + nbytes]), cp.asarray(offs), dev,
+                           (h2d(stream_h[spos:spos + nbytes]), cp.asarray(offs), dev,
                             cp.asarray(tb.view(np.uint8)), cp.asarray(sg.view(np.uint8)), np.int32(len(sg)),
                             rfi, cfi, scl, rowmap, remap, freq, cum, lut))
             spos += nbytes
