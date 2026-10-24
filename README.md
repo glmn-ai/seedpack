@@ -10,13 +10,13 @@ The idea: quants are not stored but "grown" from BF16, like a plant from a seed.
 
 Ready archives on Hugging Face:
 - [neurosquad/Qwen3-0.6B-SEEDPACK](https://huggingface.co/neurosquad/Qwen3-0.6B-SEEDPACK) — all of unsloth/Qwen3-0.6B-GGUF (BF16 and 25 quants, 10.95 GB) in one file, with a benchmark against 11 archivers;
-- [neurosquad/Qwen3.5-9B-SEEDPACK](https://huggingface.co/neurosquad/Qwen3.5-9B-SEEDPACK) — all of unsloth/Qwen3.5-9B-GGUF (BF16, mmproj and 23 quants, 147.8 GB) in 12.4 GB.
+- [neurosquad/Qwen3.5-9B-SEEDPACK](https://huggingface.co/neurosquad/Qwen3.5-9B-SEEDPACK) — all of unsloth/Qwen3.5-9B-GGUF (BF16, 21 quants and the vision projector, 147.8 GB) in 12.4 GB.
 
 ## Results
 
 | What is compressed | Original | Archive | % | lmz 1.3.0 |
 |---|---|---|---|---|
-| all of unsloth/Qwen3.5-9B-GGUF (BF16 + mmproj + 23 quants) | 147.81 GB | 12.40 GB | 8.39% | — |
+| all of unsloth/Qwen3.5-9B-GGUF (BF16 + 21 quants + 3 mmproj) | 147.81 GB | 12.40 GB | 8.39% | — |
 | all of unsloth/Qwen3-0.6B-GGUF (BF16 + 25 quants) | 10.95 GB | 781.7 MB | 7.14% | 41.5% |
 | all of unsloth/Qwen3.5-0.8B-GGUF | 14.08 GB | 1.12 GB | 7.96% | 41.2% |
 | all of unsloth/Qwen3.5-2B-GGUF | 34.57 GB | 2.91 GB | 8.41% | 43.7% |
@@ -38,10 +38,11 @@ Qwen3.5-9B, the whole repository (147.8 GB), on two SATA SSDs in a stripe (about
 | | Time | Speed |
 |---|---|---|
 | pack | 210–230 s | 640–700 MB/s |
-| extract Q4_K_M (5.7 GB) | 11–16 s | |
-| test all 28 files | 117 s | 1.26 GB/s |
+| extract Q4_K_M (5.7 GB) | about 20 s | |
+| extract all 28 files | 227 s | 650 MB/s |
+| test all 28 files (no writes) | 120–140 s | 1.1–1.2 GB/s |
 
-Peak GPU memory is 9.5 GB, process memory under 20 GB.
+Peak GPU memory is 9.5 GB when packing and 6.3 GB when unpacking, process memory under 20 GB. Extracting one quant reads the whole coded BF16 model (11.7 GB) and writes the quant, so it takes about as long as the disks need for that.
 
 ## Installation
 

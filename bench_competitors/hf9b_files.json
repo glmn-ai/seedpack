@@ -1,0 +1,142 @@
+{
+ ".gitattributes": {
+  "size": 3060,
+  "sha256": null,
+  "blob": "51b8133947a4829519fceb38c81356a7f43fb5e0"
+ },
+ "Qwen3.5-9B-BF16.gguf": {
+  "size": 17920697312,
+  "sha256": "daebe40eeea7057c1cdf35ac56d13f507d8bf12171bbb7a6b6b0d3f05439159a",
+  "blob": "14bbae2d4e494d6fd8db046059d637d2c37a2e2c"
+ },
+ "Qwen3.5-9B-IQ4_NL.gguf": {
+  "size": 5371028704,
+  "sha256": "12fd6b43e298ae4c8d374e64e8c2406c252d109ead47dffb46e75be3566ed0e5",
+  "blob": "705bb247fbcdaadb23149329df9a86caaa94634c"
+ },
+ "Qwen3.5-9B-IQ4_XS.gguf": {
+  "size": 5168653536,
+  "sha256": "7e918aeca06c52bcb528ea6b04b4ec957e75ee8c0a73138854c0dfcf371ea429",
+  "blob": "860cc9d19b36d81c2ba2bb4261bc315af0518d69"
+ },
+ "Qwen3.5-9B-Q3_K_M.gguf": {
+  "size": 4673643744,
+  "sha256": "8fed90306e4f019e2bf35f3766470b7bc59ea1a9dae00f5ceb20b43cb5514393",
+  "blob": "42a130bef65f70fd982713254cbc3ec0f0d87f03"
+ },
+ "Qwen3.5-9B-Q3_K_S.gguf": {
+  "size": 4316865760,
+  "sha256": "162050d39ebae6b8a87435f282bcb7a0e3fab7b2444db730966b3fef1ed0179e",
+  "blob": "4662424361da6789fed03f6789ae1f1b08519e5f"
+ },
+ "Qwen3.5-9B-Q4_0.gguf": {
+  "size": 5379417312,
+  "sha256": "17670346b4260ddcb0173965145155885024f3c9a4a24389a3370751edbcde24",
+  "blob": "8faf42700e63733ddabbbb6c68feb41cc1b45f04"
+ },
+ "Qwen3.5-9B-Q4_1.gguf": {
+  "size": 5837251808,
+  "sha256": "5fb62c51d47454ac1dd2fab6b40cedb94755232b553c2f245a7e13e3991b252a",
+  "blob": "f664169ec88e076355d76fee9493727fa7c2b160"
+ },
+ "Qwen3.5-9B-Q4_K_M.gguf": {
+  "size": 5680522464,
+  "sha256": "03b74727a860a56338e042c4420bb3f04b2fec5734175f4cb9fa853daf52b7e8",
+  "blob": "111d9180ac190fcfea6f515887e3c1716ba1bba8"
+ },
+ "Qwen3.5-9B-Q4_K_S.gguf": {
+  "size": 5394097376,
+  "sha256": "023713a5240bf58a84d2890a30deb2e0485abb5b9b9c33ba67596e9248b35f80",
+  "blob": "72e79e8503c53c48bd4d083f43369ac8bec202da"
+ },
+ "Qwen3.5-9B-Q5_K_M.gguf": {
+  "size": 6577841376,
+  "sha256": "dc2a39aef291f91a9116ad214058da0d86eb648743a124bd8c333787c4b9c91c",
+  "blob": "b490861460aea07fb664eeeb0125c8676a0ecd93"
+ },
+ "Qwen3.5-9B-Q5_K_S.gguf": {
+  "size": 6361146592,
+  "sha256": "be88613a50ba792bd5a2bc07b74bcd97c9ed9dbac028d27a44c6888e712323c3",
+  "blob": "ac1a5408c10a3c7241048a246e3b1a736525328e"
+ },
+ "Qwen3.5-9B-Q6_K.gguf": {
+  "size": 7458301152,
+  "sha256": "91898433cf5ce0a8f45516a4cc3e9343b6e01d052d01f684309098c66a326c59",
+  "blob": "4cc7a1016e2e6760a4ac282cf9c6ad80b6fc1f01"
+ },
+ "Qwen3.5-9B-Q8_0.gguf": {
+  "size": 9527502048,
+  "sha256": "809626574d0cb43d4becfa56169980da2bb448f2299270f7be443cb89d0a6ae4",
+  "blob": "ee7a186553b3a8570c1f99bf9635d0f225210faa"
+ },
+ "Qwen3.5-9B-UD-IQ2_M.gguf": {
+  "size": 3649365216,
+  "sha256": "a31b6b4c603ddd66b5496ee065c9dd13b2b6de77dce9e5d59609aef8d39868e7",
+  "blob": "32f286a1c6cc73993919add1815338301562c92d"
+ },
+ "Qwen3.5-9B-UD-IQ2_XXS.gguf": {
+  "size": 3190613216,
+  "sha256": "570ce2bbc92545cffbcb01df43cba59d86093dadc34c25da9f554d256bc70b91",
+  "blob": "1d26965118e3fa3a44efd68f93da80b75d059ecf"
+ },
+ "Qwen3.5-9B-UD-IQ3_XXS.gguf": {
+  "size": 4016235744,
+  "sha256": "40d0f32cd3030b04f0784139a589fb63e876cfbf8667d56311b79783c74fd149",
+  "blob": "a706c371952764ca3fae2f52c496c060b5f4396c"
+ },
+ "Qwen3.5-9B-UD-Q2_K_XL.gguf": {
+  "size": 4121781472,
+  "sha256": "fcea605227c939525a4145349a082f603d7e5df639be3d88b7aa1e883517552c",
+  "blob": "c43b03e1c0a0f7e4a67cc31842db078ac74ba672"
+ },
+ "Qwen3.5-9B-UD-Q3_K_XL.gguf": {
+  "size": 5053834464,
+  "sha256": "aae0879e1be99ce93f0d56217f8185a399e25ad68a8ebbc095f362706283062f",
+  "blob": "58b35955d312de57895def1f962fe1ac1a3209cb"
+ },
+ "Qwen3.5-9B-UD-Q4_K_XL.gguf": {
+  "size": 5966095584,
+  "sha256": "6f5d30666c2d8ae16a306e616d95341dcf3cc46810df84d7e6f5a7d1e4c1b293",
+  "blob": "dbf7a472547cb2f6d2cb325ae2cea98f1528faa0"
+ },
+ "Qwen3.5-9B-UD-Q5_K_XL.gguf": {
+  "size": 6743680224,
+  "sha256": "96cf42ddb97f9572410a72b9ed6f2299b1e887ee08da4c2a6c01e897cfa9f673",
+  "blob": "03be10e9d3c5623508401d2711173a2b9bd30626"
+ },
+ "Qwen3.5-9B-UD-Q6_K_XL.gguf": {
+  "size": 8756929760,
+  "sha256": "33b0050fb9c19abcf815647a78464dad959a06dadaecb0b96af798669f9074d4",
+  "blob": "7233634ca0251968e7de524476df3105fda1fe25"
+ },
+ "Qwen3.5-9B-UD-Q8_K_XL.gguf": {
+  "size": 12974040288,
+  "sha256": "2c4e08e0e72c68d8c1835a26f5be4075894df9ea5be9cc20a246517afd6a0cb6",
+  "blob": "454d4c9a51f127e863fd3dd2b9b275921ecefd53"
+ },
+ "README.md": {
+  "size": 78888,
+  "sha256": null,
+  "blob": "b876513d670a4d8a0b63b2f3016dea1a5659b245"
+ },
+ "imatrix_unsloth.gguf_file": {
+  "size": 5150208,
+  "sha256": "0c1bd74975ad7cf1135ad0cab1219dd5b6a8529488e5b9b207aa37c0e5396834",
+  "blob": "dfded13fcf81a3431402bee0cbabb6151ffa5cde"
+ },
+ "mmproj-BF16.gguf": {
+  "size": 921705024,
+  "sha256": "853698ce7aa6c7ba732478bad280240969ddf7b0fcbf93900046f63903a83383",
+  "blob": "aa0877447b1d7d257b28846b37e1ff66f267bfb3"
+ },
+ "mmproj-F16.gguf": {
+  "size": 918166080,
+  "sha256": "f70dc3509053962b0d0d3ee8a7eacebf5d60aa560cad78254ae8698516ae029f",
+  "blob": "61292b58497f29a508a84d26ee135d60c0aeb62b"
+ },
+ "mmproj-F32.gguf": {
+  "size": 1824062016,
+  "sha256": "a1cd5c1625b44dd0facaec998020e9b36cb78c2225eaee701e73bf2e5b051ce2",
+  "blob": "9cc6aead8a59c6434565cda5a2ab44f920a94160"
+ }
+}

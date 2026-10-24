@@ -1,0 +1,10 @@
+{
+ "_note": "neurosquad/Qwen3.5-9B-SEEDPACK, RTX 5070 12 GB, i7-8700K, 32 GB RAM, Windows 10; archive and files on two SATA SSDs in a stripe (B:), single extractions written to another SATA SSD (D:), cold OS cache. Pack with 0.2.1, the rest with seedpack 0.2.2 from PyPI.",
+ "pack_s": 232,
+ "extract_one_s": 21,
+ "extract_iq2_xxs_s": 23,
+ "extract_all_s": 227,
+ "test_all_s": 140,
+ "peak_vram_pack_gb": 9.5,
+ "peak_vram_unpack_gb": 6.3
+}
