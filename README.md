@@ -44,6 +44,8 @@ Qwen3.5-9B, the whole repository (147.8 GB), on two SATA SSDs in a stripe (about
 
 Peak GPU memory is 9.5 GB when packing and 6.3 GB when unpacking, process memory under 20 GB. Extracting one quant reads the whole coded BF16 model (11.7 GB) and writes the quant, so it takes about as long as the disks need for that.
 
+Host memory follows the machine: at every step SeedPack reads how much memory the system has available and leaves a reserve to the system and the other programs (10% of the RAM, 2-6 GB; `SEEDPACK_RESERVE_MB` sets it). Its prediction cache, read-ahead and queues grow into the rest and shrink, dropping cached predictions first, when another program takes memory. `--cache MB` caps the cache.
+
 ## Installation
 
 ```

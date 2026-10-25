@@ -34,7 +34,7 @@ from .codecs_gguf import nbytes, pack, pack_index, pack_parts, unpack, zstd_c, z
 from .gguf_reader import GGUF
 from .gpu_bf16 import M24BF16GPU
 from . import gpu2, gpuquant
-from . import imxfit, qr
+from . import imxfit, memory, qr
 from .gpuquant import GPUQuant, VARIANTS, to_host
 from .repo2 import F32, F16, BF16, base_float_np, float_as_np
 from .requant import QFUN, imatrix_chunks, load_imatrix
@@ -190,7 +190,8 @@ def _mem():
     free, total = cp.cuda.runtime.memGetInfo()
     return (f"  [{time.perf_counter() - _T0:.0f} s, private {psutil.Process().memory_info().private / 1e9:.1f} GB,"
             f" GPU used {(total - free) / 1e9:.1f} GB,"
-            f" pool {cp.get_default_memory_pool().used_bytes() / 1e9:.1f}/{cp.get_default_memory_pool().total_bytes() / 1e9:.1f} GB]")
+            f" pool {cp.get_default_memory_pool().used_bytes() / 1e9:.1f}/{cp.get_default_memory_pool().total_bytes() / 1e9:.1f} GB,"
+            f" room {memory.room() / 1e9:.1f} GB]")
 
 
 def _map_file(path):
@@ -554,23 +555,6 @@ class _Dequant:
 
     def f32(self):
         return self.gq.dequantize(self.bt.type, self.raw, self.bt.shape[0])
-LOW_COMMIT = 4 << 30                      # the prediction cache stops growing below this much free commit
-
-
-def _commit_free():
-    """bytes the system can still commit (Windows: RAM + page file left), None if unknown"""
-    if os.name != "nt":
-        return None
-    import ctypes
-
-    class MS(ctypes.Structure):
-        _fields_ = [("len", ctypes.c_ulong), ("load", ctypes.c_ulong), ("total", ctypes.c_ulonglong),
-                    ("avail", ctypes.c_ulonglong), ("pf", ctypes.c_ulonglong), ("apf", ctypes.c_ulonglong),
-                    ("virt", ctypes.c_ulonglong), ("avirt", ctypes.c_ulonglong), ("ext", ctypes.c_ulonglong)]
-    ms = MS(); ms.len = ctypes.sizeof(MS)
-    return ms.apf if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(ms)) else None
-
-
 def _gguf_tensors(path):
     """the tensor table of a GGUF file (header only), [] if it is not one"""
     import mmap
@@ -601,7 +585,7 @@ def _gguf_meta(path=None, data=None):
 class M28RepoGPU:
     name = "M28 model repo: BF16 + quants re-derived on the GPU with llama.cpp quantisers + imatrix"
 
-    def __init__(self, level=7, cache_bytes=6 << 30, inflight=4 << 30):
+    def __init__(self, level=7, cache_bytes=None, inflight=None):
         self.level = level
         self.inflight = inflight
         self.cache_bytes = cache_bytes
@@ -716,16 +700,32 @@ class M28RepoGPU:
         return None
 
     def _room(self, nbytes):
-        """whether a prediction of nbytes may be cached: within cache_bytes, and the system is not
-        short of memory (then predictions are recomputed rather than the process failing)"""
-        if self.cached + nbytes > self.cache_bytes and not self.streaming:
+        """whether a prediction of nbytes may be cached: within cache_bytes (when set), and the
+        system keeps its reserve (memory.py; else predictions are made again when needed)"""
+        if self.cache_bytes is not None and self.cached + nbytes > self.cache_bytes and not self.streaming:
             self.stats["cache_full"] = self.stats.get("cache_full", 0) + 1
             return False
-        free = _commit_free()
-        ok = free is None or free - nbytes > LOW_COMMIT
+        ok = memory.fits(nbytes)
         if not ok:
             self.stats["cache_low_memory"] = self.stats.get("cache_low_memory", 0) + 1
         return ok
+
+    def _shed(self):
+        """another program took memory and the system's reserve is short: the pools' spare blocks
+        are returned and cached predictions dropped, the oldest first (they are made again if still
+        needed)"""
+        if memory.room() >= 0:
+            return
+        _release(pinned=True)
+        with self._lock:
+            while self.cache and memory.room() < 0:
+                self.cached -= self.cache.pop(next(iter(self.cache))).nbytes
+                self.stats["cache_shed"] = self.stats.get("cache_shed", 0) + 1
+
+    def _inflight(self):
+        """bytes of files held ahead (packing: waiting for zstd; unpacking: decompressed ahead):
+        `inflight` when set, else what the memory allows"""
+        return memory.budget(self.inflight or 1 << 62, floor=0, share=2)
 
     def _predict_into(self, b, wanted, out):
         self._use(b)
@@ -1101,10 +1101,9 @@ class M28RepoGPU:
                 out += list(range(nv + 1))
             return out
 
-        # the QR coder needs the QR tensors' predictions: kept when the system can commit about
-        # the file's size once more, else predicted again batch by batch (_qr_encode)
-        free = _commit_free()
-        keep_qr = free is None or free - held > LOW_COMMIT
+        # the QR coder needs the QR tensors' predictions: kept when the memory holds about the
+        # file's size once more, else predicted again batch by batch (_qr_encode)
+        keep_qr = memory.fits(held)
 
         def xor0(key, p):
             if key[0] in isqr:
@@ -1607,8 +1606,7 @@ class M28RepoGPU:
         todo = [i for i in range(len(names)) if i not in streamed]
 
         # pipelined: the next file is read and older residuals are compressed while the GPU
-        # predicts the current one, as long as the files held stay within self.inflight bytes
-        # and the system can commit them
+        # predicts the current one, as long as the memory holds the files (_inflight)
         with ThreadPoolExecutor(3) as zp:
             for j, i in enumerate(todo):
                 name = names[i]
@@ -1618,10 +1616,10 @@ class M28RepoGPU:
                 if j + 1 < len(todo):
                     # the next file is read while this one is predicted and XOR-ed
                     nx = todo[j + 1]
-                    drain(max(0, self.inflight - fsize[i] - fsize[nx]))
-                    free = _commit_free()
-                    if free is None or free - fsize[i] - fsize[nx] > LOW_COMMIT:
+                    drain(max(0, self._inflight() - fsize[i] - fsize[nx]))
+                    if memory.fits(fsize[i] + fsize[nx]):
                         reads[nx] = rd.submit(read, names[nx])
+                self._shed()
                 plan, b = self._residual(data, fi=i)
                 if self._qr_chunk is not None:
                     put(f"q{i}", self._qr_chunk)
@@ -1650,8 +1648,8 @@ class M28RepoGPU:
         rd.shutdown()
         put_bases(wait=True)
         bp.shutdown()
-        if self.stats.get("qr_grid"):
-            manifest["needs"] = "0.3.0"           # QR-coded IQ grid types: the first version that reads them
+        if self.stats.get("qr_grid") or self.stats.get("ref"):
+            manifest["needs"] = "0.3.0"           # QR-coded IQ grid types, references: the first version that reads them
         fitted = self._fit_chunk()
         if fitted:
             put(fitted[1]["chunk"], fitted[0])
@@ -1729,20 +1727,58 @@ class M28RepoGPU:
                 qmeta = json.loads(zstd_d(qch["meta"]))
             found.append((order, (i, m, tens, res, qch, qmeta)))
         out = []
-        for order, ks in _order_groups([o for o, _ in found]).items():
+        for order, ks in self._ref_groups(found, by_name, rejected).items():
             gf = [found[k][1] for k in ks]
             pos = {n: p for p, n in enumerate(order)}
             keep = [(min(pos[n] for n in names), max(pos[n] for n in names)) for f in gf for _, names in f[5]]
             nbytes = [by_name[n].nbytes for n in order]
             plans = [{e[0]: e for e in f[1]["plan"]} for f in gf]
-            pred = [sum({(f[2][n].type, pl[n][2]): f[2][n].nbytes for f, pl in zip(gf, plans) if n in pl}.values())
-                    for n in order]
+            pred = [sum({(f[2][n].type, pl[n][2]): f[2][n].nbytes for f, pl in zip(gf, plans)
+                         if n in pl and pl[n][1] != "ref"}.values()) for n in order]
             wins = self._windows(nbytes, keep, self._window_bytes(), pred)
             if any(sum(nbytes[a:z]) > limit for a, z in wins):
                 rejected.update(f[0] for f in gf)
                 continue
             out.append((order, wins, gf))
         return out, rejected
+
+    @staticmethod
+    def _ref_groups(found, by_name, rejected):
+        """_order_groups of the files found [(order, (index, entry, ...))], where groups whose files
+        reference each other's tensors are joined (the encoder streamed them together; a selection
+        of files may not hold the order that joined them): such a group's order is its tensors in
+        the base's order, when that order holds each file's. Files that cannot be joined go to
+        `rejected` (decoded one by one)"""
+        groups = _order_groups([o for o, _ in found])
+        at = {f[0]: k for k, (_, f) in enumerate(found)}
+        gid = {k: g for g, ks in enumerate(groups.values()) for k in ks}
+        parent = list(range(len(groups)))
+
+        def root(g):
+            while parent[g] != g:
+                g = parent[g]
+            return g
+
+        for k, (_, f) in enumerate(found):
+            for e in f[1]["plan"]:
+                if e[1] == "ref" and e[2][0] in at:
+                    parent[root(gid[k])] = root(gid[at[e[2][0]]])
+        joined = {}
+        for g, (order, ks) in enumerate(groups.items()):
+            joined.setdefault(root(g), []).append((order, ks))
+        out = {}
+        for parts in joined.values():
+            if len(parts) == 1:
+                out[parts[0][0]] = parts[0][1]
+                continue
+            ks = sorted(k for _, k2 in parts for k in k2)
+            order = tuple(sorted({n for o, _ in parts for n in o}, key=lambda n: by_name[n].offset))
+            pos = {n: p for p, n in enumerate(order)}
+            if all(all(pos[x] < pos[y] for x, y in zip(o, o[1:])) for o, _ in parts):
+                out[order] = ks
+            else:
+                rejected.update(found[k][1][0] for k in ks)
+        return out
 
     @staticmethod
     def _rt_parts(rt):
@@ -1845,6 +1881,7 @@ class M28RepoGPU:
     AHEAD = 2 << 30                           # bytes of the files read ahead of their coding (at most)
     QR_BACKLOG = 4                            # QR batches waiting for the coder
     FEED_BYTES = 2 << 30                      # coded spans waiting for zstd (at most)
+    REF_KEEP = 3 << 30                        # tensors a window's later files copy, kept by the decoder (at most)
 
     def _stream_encode(self, b, path, items, params, on_stream=None):
         """the derived files items [(index, name, path)] of big base b (the base file `path`),
@@ -1906,7 +1943,7 @@ class M28RepoGPU:
                     zstandard.ZstdCompressor(compression_params=prm)
                 st.comp = z.compressobj(size=st.size)
             feeds.append((st.lane.submit(compress, st, span, wait), len(span)))
-            while len(feeds) > 1 and sum(n for _, n in feeds) > self.FEED_BYTES:
+            while len(feeds) > 1 and sum(n for _, n in feeds) > memory.budget(self.FEED_BYTES):
                 feeds.popleft()[0].result()
 
         home = self.bases[b]
@@ -1960,9 +1997,13 @@ class M28RepoGPU:
                     self._use(b)
                     names = order[a:z]
                     memo, qmemo, wq = {}, {}, []
+                    # a tensor equal to one an earlier file of the window coded with a residual
+                    # becomes a reference to it [name, "ref", [file, name], type]: the decoder copies
+                    # it, keeping such sources within the window (REF_KEEP bytes)
+                    first, kept, kept_bytes = {}, set(), 0
                     tw["files"], tw["span wait"] = -time.perf_counter(), 0.0
-                    free = _commit_free()
-                    limit = self.AHEAD if free is None else min(self.AHEAD, max(1 << 30, (free - LOW_COMMIT) // 3))
+                    self._shed()
+                    limit = memory.budget(self.AHEAD)
                     for st in sts:
                         # spans read ahead: at least the next one, at most `limit` bytes
                         while nxt < len(jobs) and (len(sf) < 2 or sum(n for _, n in sf) < limit):
@@ -1976,6 +2017,21 @@ class M28RepoGPU:
                         hashes = {n: f.result() for n, f in tf.items()}
                         tw["span wait"] += time.perf_counter()
                         mine = [(st.tens[n], st.kind[n]) for n in names if n in st.tens]
+                        refs = {}
+                        for t, kd in mine:
+                            key = (t.name, t.type, hashes.get(t.name))
+                            src = first.get(key)
+                            if src is None or not memo.get(key, (0, 0, False))[2] or t.nbytes < self.DUP_MIN:
+                                continue
+                            if (src, t.name) not in kept:
+                                if kept_bytes + t.nbytes > self.REF_KEEP:
+                                    continue
+                                kept.add((src, t.name)); kept_bytes += t.nbytes
+                            refs[t.name] = [src, t.name]
+                            span[t.offset - st.pos:t.offset - st.pos + t.nbytes] = 0
+                        if refs:
+                            mine = [(t, kd) for t, kd in mine if t.name not in refs]
+                            self.stats["ref"] = self.stats.get("ref", 0) + len(refs)
                         self.cur_set = st.k
                         if self.fit_wait.get(st.k):
                             self._fit_from(st.k, [t for t, kd in mine if kd == "rq"],
@@ -1986,7 +2042,9 @@ class M28RepoGPU:
                         st.qjobs.extend(qf); wq += qf
                         while sum(not f.done() for f in wq_prev + wq) > self.QR_BACKLOG:
                             next(f for f in wq_prev + wq if not f.done()).result()
-                        st.plan += plan
+                        for t, _ in mine:
+                            first.setdefault((t.name, t.type, hashes.get(t.name)), st.i)
+                        st.plan += plan + [[n, "ref", r, st.tens[n].type] for n, r in refs.items()]
                         feed(st, span, qf)
                         st.pos += len(span)
                         del span
@@ -2043,6 +2101,17 @@ class M28RepoGPU:
                 jobs.append((k, pos[k], end)); pos[k] = end
         home = self.bases[b]
         self.streaming = True
+        # a file decoded only for the references of others: just the tensors they copy
+        kof = {f[0]: k for k, f in enumerate(gf)}
+        needed = [None if outs[k] is not None else set() for k in range(len(gf))]
+        for k, f in enumerate(gf):
+            if outs[k] is not None:
+                for e in f[1]["plan"]:
+                    if e[1] == "ref" and needed[kof[e[2][0]]] is not None:
+                        needed[kof[e[2][0]]].add(e[2][1])
+
+        def use(k, n):
+            return needed[k] is None or n in needed[k]
 
         def batch_keys(m, qch, qmeta):
             """per QR batch: its type, tensors, their variants and its coded bytes' hash"""
@@ -2062,7 +2131,7 @@ class M28RepoGPU:
             qkeys, host, room = {}, [], min(self.QPRED_GPU, cp.cuda.runtime.memGetInfo()[1] // 24)
             for k, f in enumerate(gf):
                 for n in names:
-                    if n not in plans[k]:
+                    if n not in plans[k] or plans[k][n][1] == "ref" or not use(k, n):
                         continue
                     e, t = plans[k][n], f[2][n]
                     key = (n, t.type, e[2])
@@ -2101,18 +2170,26 @@ class M28RepoGPU:
             sf, nxt, jn = deque(), 0, 0
             for w, (a, z) in enumerate(wins):
                 names = order[a:z]
+                self._shed()
                 win = prep.pop(w).result()
                 if w + 1 < len(wins) and both_fit(w):
                     prep[w + 1] = ahead(w + 1)
                 self.bases[b] = home[:1] + (win,) + home[2:]
                 self._use(b)
                 inwin = set(names)
+                # tensors the window's later files copy (references): kept from their file on
+                last_ref, kept_r = {}, {}
+                for k, f in enumerate(gf):
+                    for n in names:
+                        e = plans[k].get(n)
+                        if e is not None and e[1] == "ref" and outs[k] is not None:
+                            last_ref[tuple(e[2])] = k
                 # QR batches equal to one of an earlier file (same tensors, variants, coded bytes:
                 # the encoder codes such a batch once) are decoded once
                 need, qdmemo = Counter(), {}
-                for i, m, tens, res, qch, qmeta in gf:
+                for k, (i, m, tens, res, qch, qmeta) in enumerate(gf):
                     for q, (T, qn) in enumerate(qmeta):
-                        if qn[0] in inwin:
+                        if qn[0] in inwin and any(use(k, n) for n in qn):
                             need[bkeys[i][q]] += 1
                 for _ in gf:
                     while nxt < len(jobs) and len(sf) < 3:
@@ -2127,9 +2204,10 @@ class M28RepoGPU:
                         t = tens[key[0]]
                         xj.extend(_xor_async(span[t.offset - p0:t.offset - p0 + t.nbytes], p, check=False))
 
-                    self._predict([(tens[n], plan[n][2]) for n in names if n in plan and plan[n][1] != "qr"], xor)
+                    self._predict([(tens[n], plan[n][2]) for n in names
+                                   if n in plan and plan[n][1] not in ("qr", "ref") and use(k, n)], xor)
                     for q, (T, qn) in enumerate(qmeta):
-                        if qn[0] in inwin:
+                        if qn[0] in inwin and any(use(k, n) for n in qn):
                             bk = bkeys[i][q]
                             held = qdmemo.get(bk)
                             if held is None:
@@ -2149,6 +2227,14 @@ class M28RepoGPU:
                                 xor((n,), held[n])
                     for f in xj:
                         f.result()
+                    for n in names:
+                        e, t = plan.get(n), tens.get(n)
+                        if e is not None and e[1] == "ref" and outs[k] is not None:   # a copy of an earlier file's tensor
+                            span[t.offset - p0:t.offset - p0 + t.nbytes] = kept_r[tuple(e[2])]
+                        elif (i, n) in last_ref:
+                            kept_r[(i, n)] = span[t.offset - p0:t.offset - p0 + t.nbytes].copy()
+                    for key in [key for key, last in last_ref.items() if last == k]:
+                        kept_r.pop(key, None)
                     if outs[k] is not None:
                         outs[k].write(span)
                     span = xj = None
@@ -2201,14 +2287,15 @@ class M28RepoGPU:
         todo = list(sel)
         while todo:                           # files holding the sources of duplicate tensors
             for e in mf[todo.pop()]["plan"]:
-                if e[1] == "dup" and e[2][0] not in sel:
+                if e[1] in ("dup", "ref") and e[2][0] not in sel:
                     sel.add(e[2][0]); todo.append(e[2][0])
         files = [(i, mf[i]) for i in sorted(sel)]
-        last_use = {}                         # (file, tensor) -> last file that copies it
+        last_use, last_ref = {}, {}           # (file, tensor) -> last file that copies it: duplicates, references
         for i, m in files:
             for e in m["plan"]:
-                if e[1] == "dup":
-                    last_use[tuple(e[2])] = max(last_use.get(tuple(e[2]), -1), i)
+                if e[1] in ("dup", "ref"):
+                    lu = last_use if e[1] == "dup" else last_ref
+                    lu[tuple(e[2])] = max(lu.get(tuple(e[2]), -1), i)
         need = {i for i, n in enumerate(manifest["bases"]) if want(n)} | \
                {m["base"] for _, m in files if m["base"] is not None}
         nb = len(manifest["bases"])           # base nb + k: split model k, its shards joined (_join)
@@ -2249,10 +2336,10 @@ class M28RepoGPU:
             return _zstd_into(dec, get(f"f{i}"), m["size"])
 
         zp = ThreadPoolExecutor(2)
-        nxt, ahead = {}, 0                    # files decompressed ahead, within self.inflight bytes
+        nxt, ahead = {}, 0                    # files decompressed ahead, within _inflight() bytes
         if len(zdicts) == len({m["base"] for _, m in files if m["base"] is not None}) and not big:
             while ahead < len(files) and ahead < 2 and sum(
-                    files[q][1]["size"] for q in range(0, ahead + 1)) <= self.inflight:
+                    files[q][1]["size"] for q in range(0, ahead + 1)) <= self._inflight():
                 nxt[ahead] = zp.submit(zd, files[ahead][0])
                 ahead += 1
         for i, name in enumerate(manifest["bases"]):
@@ -2304,7 +2391,7 @@ class M28RepoGPU:
             if manifest.get("imx_fit"):
                 self._load_imx(get(manifest["imx_fit"]["chunk"]))
             if all(len(e) > 3 for _, m in files for e in m["plan"]):     # archives that record the types
-                self._expect((e[0], e[3], e[2]) for _, m in files for e in m["plan"] if e[1] != "dup")
+                self._expect((e[0], e[3], e[2]) for _, m in files for e in m["plan"] if e[1] not in ("dup", "ref"))
         sources = {k[0] for k in last_use}      # files holding tensors that others copy: not streamed
         streams = dict(big)
         for k, g in enumerate(joined):
@@ -2351,23 +2438,26 @@ class M28RepoGPU:
                 return None
             self._use(m["base"])
             out = {}
-            self._predict([(_T(e[0], e[3], self.by_name[e[0]].shape), e[2]) for e in m["plan"] if e[1] != "dup"],
-                          lambda key, p: out.__setitem__(key[0], p))
+            self._predict([(_T(e[0], e[3], self.by_name[e[0]].shape), e[2]) for e in m["plan"]
+                           if e[1] not in ("dup", "ref")], lambda key, p: out.__setitem__(key[0], p))
             if any(e[1] == "qr" for e in m["plan"]):
                 self._qr_decode(get(f"q{i}"), out)
             _release()                        # here: cudaFree waits for the GPU, which is this thread's
             return out
 
+        # files decoded one by one (not streamed) copy references too: their sources then wait in
+        # temporary files (they can be many: a window's budget does not hold here)
+        copies = {k: max(last_use.get(k, -1), last_ref.get(k, -1)) for k in {**last_use, **last_ref}}
         with zp, ThreadPoolExecutor(1) as gp:
             pf = {}                           # predictions: the current file and the next
             kept_t = {}                       # (file, tensor) -> bytes, kept for later duplicates
             for k, (i, m) in enumerate(files):
                 while ahead < len(files) and (ahead <= k or (ahead - k < 3 and sum(
-                        files[q][1]["size"] for q in range(k, ahead + 1)) <= self.inflight)):
+                        files[q][1]["size"] for q in range(k, ahead + 1)) <= self._inflight())):
                     nxt[ahead] = zp.submit(zd, files[ahead][0])
                     ahead += 1
-                for q in (k, k + 1):
-                    if q < len(files) and q not in pf and not stream:
+                for q in (k, k + 1):              # the next file's predictions ahead: when the memory holds them
+                    if q < len(files) and q not in pf and not stream and (q == k or memory.fits(2 * files[q][1]["size"])):
                         pf[q] = gp.submit(preds, files[q][0])
                 data = nxt.pop(k).result()
                 if m.get("codec") == "q8":
@@ -2377,7 +2467,7 @@ class M28RepoGPU:
                     tens = {t.name: t for t in GGUF.from_bytes(data, light=True).tensors}
                     by_name = self.bases[m["base"]][2]
                     pred = pf.pop(k).result() if not stream else None
-                    plan = [e for e in m["plan"] if e[1] != "dup"]
+                    plan = [e for e in m["plan"] if e[1] not in ("dup", "ref")]
                     if stream:
                         gp.submit(self._predict_xor, m["base"], plan, tens, view, lambda: get(f"q{i}")).result()
                         pred = {}
@@ -2396,17 +2486,18 @@ class M28RepoGPU:
                         f.result()
                     jobs = []
                     for e in m["plan"]:
-                        if e[1] == "dup":             # a copy of an earlier file's tensor
+                        if e[1] in ("dup", "ref"):    # a copy of an earlier file's tensor
                             t = tens[e[0]]
                             jobs += _copy_async(view[t.offset:t.offset + t.nbytes], kept_t[tuple(e[2])])
                     for f in jobs:
                         f.result()
-                    for key in [key for key in kept_t if last_use[key] <= i]:
+                    for key in [key for key in kept_t if copies[key] <= i]:
                         del kept_t[key]
                     jobs = []
                     for n, t in tens.items():
-                        if (i, n) in last_use:
-                            kept_t[(i, n)] = np.empty(t.nbytes, np.uint8)
+                        if (i, n) in copies:
+                            kept_t[(i, n)] = _scratch_array(t.nbytes, self.scratch) if (i, n) in last_ref \
+                                else np.empty(t.nbytes, np.uint8)
                             jobs += _copy_async(kept_t[(i, n)], view[t.offset:t.offset + t.nbytes])
                     for f in jobs:
                         f.result()

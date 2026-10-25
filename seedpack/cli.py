@@ -24,7 +24,7 @@ import time
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 
-from . import __version__
+from . import __version__, memory
 
 TOOL = f"seedpack {__version__}"
 
@@ -37,27 +37,10 @@ def _hasher(algo):
     return lambda d: hashlib.sha256(d).hexdigest()
 
 
-def physical_ram():
-    try:
-        if os.name == "nt":
-            import ctypes
-
-            class MS(ctypes.Structure):
-                _fields_ = [("len", ctypes.c_ulong), ("load", ctypes.c_ulong), ("total", ctypes.c_ulonglong),
-                            ("avail", ctypes.c_ulonglong), ("pf", ctypes.c_ulonglong), ("apf", ctypes.c_ulonglong),
-                            ("virt", ctypes.c_ulonglong), ("avirt", ctypes.c_ulonglong), ("ext", ctypes.c_ulonglong)]
-            ms = MS(); ms.len = ctypes.sizeof(MS)
-            ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(ms))
-            return ms.total
-        return os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
-    except Exception:
-        return 16 << 30
-
-
 def cache_bytes(mb):
-    """--cache MB, or by default a fifth of the RAM (at most 6 GB): predictions of tensors that
-    repeat across files are kept until their last use (Qwen3.5-2B needs about 6 GB)"""
-    return mb << 20 if mb is not None else min(6 << 30, physical_ram() // 5)
+    """--cache MB, or by default None: predictions of tensors that repeat across files are kept
+    until their last use while the system has room for them (memory.py)"""
+    return mb << 20 if mb is not None else None
 
 
 def default_algo():
@@ -226,6 +209,7 @@ def cmd_pack(a):
     total = sum(os.path.getsize(p) for p in files.values())
     print(f"{len(files)} files, {human(total)}: {len(bases)} BF16 base(s), {len(derived)} derived GGUF(s), "
           f"{len(extras)} other file(s)")
+    print(f"  memory: {human(max(0, memory.room()))} free to use, {human(memory.reserve())} kept for the system")
     want_im = sorted({os.path.basename(_IMATRIX_OF[p].replace("\\", "/")) for p in derived.values() if p in _IMATRIX_OF})
     if want_im and not any("imatrix" in n.lower() for n in extras):
         print(f"  note: the quants were made with an importance matrix ({', '.join(want_im[:3])}); adding that file "
@@ -465,7 +449,7 @@ def main(argv=None):
     s.add_argument("-o", "--output", required=True, help="archive to create (.seedpack)")
     s.add_argument("--method", choices=["m29", "m28"], default="m29", help="m29 (default): BF16 v2 base codec; m28: M24 codec")
     s.add_argument("--level", type=int, default=7, help="zstd level of the residuals (default 7; 9: about 1.5%% smaller, slower)")
-    s.add_argument("--cache", type=int, default=None, help="prediction cache in MB (default: a fifth of the RAM, at most 6144)")
+    s.add_argument("--cache", type=int, default=None, help="prediction cache cap in MB (default: none, whatever the memory allows)")
     s.add_argument("-f", "--force", action="store_true", help="overwrite the archive")
     s.add_argument("-q", "--quiet", action="store_true", help="no per-file progress")
     s.set_defaults(fn=cmd_pack)
@@ -479,7 +463,7 @@ def main(argv=None):
             s.add_argument("-f", "--force", action="store_true", help="overwrite existing files")
         else:
             s.set_defaults(force=True)
-        s.add_argument("--cache", type=int, default=None, help="prediction cache in MB (default: a fifth of the RAM, at most 6144)")
+        s.add_argument("--cache", type=int, default=None, help="prediction cache cap in MB (default: none, whatever the memory allows)")
         s.set_defaults(fn=fn)
     s = sub.add_parser("list", aliases=["l"], help="list the files in an archive")
     s.add_argument("archive", help="a .seedpack file or hf://OWNER/REPO[/FILE.seedpack][@REVISION]")
