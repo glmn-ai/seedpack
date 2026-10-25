@@ -1,0 +1,14 @@
+{
+ "_note": "neurosquad/Qwen3.8-27B-SEEDPACK, RTX 5070 12 GB, i7-8700K, 32 GB RAM, Windows 10; repository on two SATA SSDs in a stripe (B:), archive written to another SATA SSD (D:). Packed with SeedPack 0.3.0 (the release commit).",
+ "archive": 45410617876,
+ "pack_s": 1373,
+ "peak_vram_pack_gb": 8.8,
+ "ud_bytes": 8910552966,
+ "old_imatrix_bytes": 98121248,
+ "fitted_imatrix_bytes": 6299650,
+ "blocks_equal": [
+  36.8,
+  97.3
+ ],
+ "references": 4837
+}

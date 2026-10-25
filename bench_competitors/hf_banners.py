@@ -32,6 +32,7 @@ BROWSERS = [r"C:\Program Files\Google\Chrome\Application\chrome.exe",
 RELEASES = [  # archive: size of the published .seedpack file
     dict(model="Qwen3-0.6B", src="unsloth/Qwen3-0.6B-GGUF", files="hf06_files.json", archive=781678552),
     dict(model="Qwen3.5-9B", src="unsloth/Qwen3.5-9B-GGUF", files="hf9b_files.json", archive=12396550582),
+    dict(model="Qwen3.8-27B", src="unsloth/Qwen3.8-27B-GGUF", files="hf27b_files.json", archive=45410617876),
 ]
 FONT = "https://github.com/google/fonts/raw/main/ofl/exo2/"        # Exo 2, variable: normal and italic
 FONT_FILES = {"normal": "Exo2%5Bwght%5D.ttf", "italic": "Exo2-Italic%5Bwght%5D.ttf"}

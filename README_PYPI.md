@@ -16,7 +16,7 @@
 
 The archive is smaller than the repository's largest single quant (UD-Q8_K_XL, 844 MB). The full benchmark against 10 other compressors, with speeds and single files, is on the [example archive's page](https://huggingface.co/neurosquad/Qwen3-0.6B-SEEDPACK).
 
-Models bigger than the GPU's memory are streamed: all of unsloth/Qwen3.5-9B-GGUF (BF16, 21 quants and the vision projector, 147.8 GB) packs into [12.4 GB](https://huggingface.co/neurosquad/Qwen3.5-9B-SEEDPACK) in under 4 minutes on a 12 GB card, and its Q4_K_M comes back in about 20 s.
+Models bigger than the GPU's memory are streamed: all of unsloth/Qwen3.5-9B-GGUF (BF16, 21 quants and the vision projector, 147.8 GB) packs into [12.4 GB](https://huggingface.co/neurosquad/Qwen3.5-9B-SEEDPACK) in under 4 minutes on a 12 GB card, and its Q4_K_M comes back in about 20 s. All of unsloth/Qwen3.8-27B-GGUF (BF16 in two shards, 24 quants, the MTP layer and two vision projectors, 472.1 GB) packs into [45.4 GB](https://huggingface.co/neurosquad/Qwen3.8-27B-SEEDPACK) in 23 minutes on the same card with 32 GB of RAM. Unsloth's Dynamic quants cannot be re-derived exactly; their residuals are coded with position-aware contexts, the tensors they share are stored once, and the imatrix that the plain Q4_0 / Q4_1 were made with, which is not in the repository, is fitted back from the quants.
 
 ## Install
 
@@ -64,7 +64,7 @@ A GGUF repository ships the same weights 20–30 times: the BF16 model plus each
 ## Links
 
 - Source and research notes: <https://github.com/glmn-ai/seedpack>
-- Example archives: <https://huggingface.co/neurosquad/Qwen3-0.6B-SEEDPACK>, <https://huggingface.co/neurosquad/Qwen3.5-9B-SEEDPACK>
+- Example archives: <https://huggingface.co/neurosquad/Qwen3-0.6B-SEEDPACK>, <https://huggingface.co/neurosquad/Qwen3.5-9B-SEEDPACK>, <https://huggingface.co/neurosquad/Qwen3.8-27B-SEEDPACK>
 - A [NeuroSquad](https://huggingface.co/neurosquad) project.
 
 ## License

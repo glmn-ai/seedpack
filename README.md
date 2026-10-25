@@ -10,12 +10,14 @@ The idea: quants are not stored but "grown" from BF16, like a plant from a seed.
 
 Ready archives on Hugging Face:
 - [neurosquad/Qwen3-0.6B-SEEDPACK](https://huggingface.co/neurosquad/Qwen3-0.6B-SEEDPACK) — all of unsloth/Qwen3-0.6B-GGUF (BF16 and 25 quants, 10.95 GB) in one file, with a benchmark against 11 archivers;
-- [neurosquad/Qwen3.5-9B-SEEDPACK](https://huggingface.co/neurosquad/Qwen3.5-9B-SEEDPACK) — all of unsloth/Qwen3.5-9B-GGUF (BF16, 21 quants and the vision projector, 147.8 GB) in 12.4 GB.
+- [neurosquad/Qwen3.5-9B-SEEDPACK](https://huggingface.co/neurosquad/Qwen3.5-9B-SEEDPACK) — all of unsloth/Qwen3.5-9B-GGUF (BF16, 21 quants and the vision projector, 147.8 GB) in 12.4 GB;
+- [neurosquad/Qwen3.8-27B-SEEDPACK](https://huggingface.co/neurosquad/Qwen3.8-27B-SEEDPACK) — all of unsloth/Qwen3.8-27B-GGUF (BF16 in 2 shards, 24 quants, the MTP layer and two vision projectors, 472.1 GB) in 45.4 GB, though Unsloth's Dynamic quants cannot be re-derived exactly.
 
 ## Results
 
 | What is compressed | Original | Archive | % | lmz 1.3.0 |
 |---|---|---|---|---|
+| all of unsloth/Qwen3.8-27B-GGUF (BF16 + 24 quants + MTP + 2 mmproj) | 472.07 GB | 45.41 GB | 9.62% | — |
 | all of unsloth/Qwen3.5-9B-GGUF (BF16 + 21 quants + 3 mmproj) | 147.81 GB | 12.40 GB | 8.39% | — |
 | all of unsloth/Qwen3-0.6B-GGUF (BF16 + 25 quants) | 10.95 GB | 781.7 MB | 7.14% | 41.5% |
 | all of unsloth/Qwen3.5-0.8B-GGUF | 14.08 GB | 1.12 GB | 7.96% | 41.2% |
@@ -44,7 +46,7 @@ Qwen3.5-9B, the whole repository (147.8 GB), on two SATA SSDs in a stripe (about
 
 Peak GPU memory is 9.5 GB when packing and 6.3 GB when unpacking, process memory under 20 GB. Extracting one quant reads the whole coded BF16 model (11.7 GB) and writes the quant, so it takes about as long as the disks need for that.
 
-Host memory follows the machine: at every step SeedPack reads how much memory the system has available and leaves a reserve to the system and the other programs (10% of the RAM, 2-6 GB; `SEEDPACK_RESERVE_MB` sets it). Its prediction cache, read-ahead and queues grow into the rest and shrink, dropping cached predictions first, when another program takes memory. `--cache MB` caps the cache.
+Host memory follows the machine: at every step SeedPack reads how much memory the system has available and leaves a reserve to the system and the other programs (20% of the RAM, 6-12 GB; `SEEDPACK_RESERVE_MB` sets it). Its prediction cache, read-ahead and queues grow into the rest and shrink, dropping cached predictions first, when another program takes memory. `--cache MB` caps the cache.
 
 ## Installation
 
