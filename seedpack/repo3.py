@@ -164,6 +164,20 @@ class _Spill:
         return [mmap.mmap(self.f.fileno(), 0, access=mmap.ACCESS_READ)]
 
 
+class _LazyChunk:
+    """a packed chunk of an archive (pack()) whose parts are read when used: chunk[part] -> bytes.
+    A file's QR chunk holds all its QR batches (gigabytes for a big repository's quants); the
+    parts escape the chunk's CRC, the files' own checksums still cover them"""
+
+    def __init__(self, reader, name):
+        self.reader, self.name = reader, name
+        self.idx = pack_index(lambda o, n: reader.read_at(name, o, n))
+
+    def __getitem__(self, part):
+        o, n = self.idx[part]
+        return self.reader.read_at(self.name, o, n)
+
+
 _T0 = __import__("time").perf_counter()
 
 
@@ -966,6 +980,16 @@ class M28RepoGPU:
         """a file's QR chunk"""
         return pack({"meta": zstd_c(json.dumps(meta).encode()), **{str(k): p for k, p in enumerate(parts)}})
 
+    @staticmethod
+    def _qr_parts(st):
+        """a streamed file's QR chunk from its spill, as buffers (pack_parts: never joined)"""
+        data = st.qspill.data()
+        if len(data) != len(st.qlens):            # spilled to a file: one mapping, cut into the batches
+            mv, o, data = memoryview(data[0]), 0, []
+            for n in st.qlens:
+                data.append(mv[o:o + n]); o += n
+        return pack_parts({"meta": zstd_c(json.dumps(st.qmeta).encode()), **{str(k): p for k, p in enumerate(data)}})
+
     def _qr_decode(self, buf, pred):
         """the file's QR chunk + predictions {name: bytes} -> the QR tensors' bytes put in `pred`
         (their residual regions are zero, so the caller's XOR writes them)"""
@@ -1575,7 +1599,7 @@ class M28RepoGPU:
                     self.sizes[names[i]] = nbytes(c)
                     if q is not None:
                         put(f"q{i}", q)
-                        self.sizes[names[i] + " (QR)"] = len(q)
+                        self.sizes[names[i] + " (QR)"] = nbytes(q)
                     manifest["files"][i] = entry
                     streamed[i] = True
                     if self.verbose:
@@ -1701,7 +1725,7 @@ class M28RepoGPU:
             order = tuple(sorted((e[0] for e in plan), key=lambda n: tens[n].offset))
             qch, qmeta = None, []
             if any(e[1] == "qr" for e in plan):
-                qch = unpack(reader.get(f"q{i}"))
+                qch = _LazyChunk(reader, f"q{i}")
                 qmeta = json.loads(zstd_d(qch["meta"]))
             found.append((order, (i, m, tens, res, qch, qmeta)))
         out = []
@@ -1838,8 +1862,9 @@ class M28RepoGPU:
                 continue
             st = types.SimpleNamespace(
                 i=i, name=name, path=fpath, size=os.path.getsize(fpath), tens={t.name: t for t, _ in ts},
-                kind={t.name: k for t, k in ts}, start=ts[0][0].offset, pos=0, plan=[], qmeta=[], qparts=[],
-                comp=None, spill=_Spill(self.scratch), lane=ThreadPoolExecutor(1), qjobs=[],
+                kind={t.name: k for t, k in ts}, start=ts[0][0].offset, pos=0, plan=[], qmeta=[], qlens=[],
+                qspill=_Spill(self.scratch), comp=None, spill=_Spill(self.scratch), lane=ThreadPoolExecutor(1),
+                qjobs=deque(),
                 hlane=ThreadPoolExecutor(1), k=self.file_set.get(i, 0),
                 hash=on_stream(name) if on_stream else None)
             found.append((tuple(t.name for t, _ in ts), st))
@@ -1861,6 +1886,14 @@ class M28RepoGPU:
             for f in wait:                      # the QR jobs zero their tensors' regions first
                 f.result()
             st.spill.write(st.comp.compress(span))
+
+        def spill_qr(st, wait):
+            """the file's QR batches coded so far (all with `wait`) to its spill, in order: a big
+            repository's QR output would not fit in memory until the end"""
+            while st.qjobs and (wait or st.qjobs[0].done()):
+                m, part = st.qjobs.popleft().result()
+                st.qmeta.append(m); st.qlens.append(len(part))
+                st.qspill.write(part)
 
         def feed(st, span, wait=()):
             if not len(span):                   # (none of the file's tensors in the window)
@@ -1950,7 +1983,7 @@ class M28RepoGPU:
                         plan, qitems, choice = self._residual_tensors(span, st.pos, mine, len(span), memo, hashes) \
                             if mine else ([], [], {})
                         qf = self._qr_submit(qpool, qitems, choice, hashes, qmemo) if qitems else []
-                        st.qjobs += qf; wq += qf
+                        st.qjobs.extend(qf); wq += qf
                         while sum(not f.done() for f in wq_prev + wq) > self.QR_BACKLOG:
                             next(f for f in wq_prev + wq if not f.done()).result()
                         st.plan += plan
@@ -1973,6 +2006,8 @@ class M28RepoGPU:
                     self.bases[b] = home
                     self._use(b)
                     _release()
+                    for st in sts:
+                        spill_qr(st, False)
                     if self.verbose:
                         print(f"  window {w + 1}/{len(wins)}: {z - a} tensors x {len(sts)} files, "
                               f"{sum(by_name[n].nbytes for n in names) / 1e9:.2f} GB of the base, "
@@ -1986,11 +2021,9 @@ class M28RepoGPU:
             for st in sts:
                 st.lane.submit(lambda st=st: st.spill.write(st.comp.flush())).result()
                 st.lane.shutdown(); st.hlane.shutdown()
-                for f in st.qjobs:
-                    m, part = f.result()
-                    st.qmeta.append(m); st.qparts.append(part)
-                q = self._qr_pack(st.qmeta, st.qparts) if st.qmeta else None
-                out[st.i] = ({"name": st.name, "size": st.size, "base": b, "plan": st.plan}, st.spill.data(), q)
+                spill_qr(st, True)
+                out[st.i] = ({"name": st.name, "size": st.size, "base": b, "plan": st.plan}, st.spill.data(),
+                             self._qr_parts(st) if st.qmeta else None)
         while feeds:
             feeds.popleft()[0].result()
         self.streaming = False
