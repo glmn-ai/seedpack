@@ -9,7 +9,9 @@ the BF16 weights and the repository's imatrix. Differences from M27:
     keeps, per tensor, the variant that reproduces the file best and records it in the manifest;
   * predictions are cached across files (most tensors repeat from file to file), so no content
     hashing / dedup pass is needed: a repeated tensor is predicted exactly and costs nothing;
-  * file reading, zstd and the GPU work are pipelined.
+  * file reading, zstd and the GPU work are pipelined;
+  * quants made with an importance matrix other than the repository's (their GGUF says so) are
+    predicted with the importance fitted back from them (imxfit.py), kept in the archive.
 """
 import bisect
 import dataclasses
@@ -32,10 +34,10 @@ from .codecs_gguf import nbytes, pack, pack_index, pack_parts, unpack, zstd_c, z
 from .gguf_reader import GGUF
 from .gpu_bf16 import M24BF16GPU
 from . import gpu2, gpuquant
-from . import qr
+from . import imxfit, qr
 from .gpuquant import GPUQuant, VARIANTS, to_host
 from .repo2 import F32, F16, BF16, base_float_np, float_as_np
-from .requant import QFUN, load_imatrix
+from .requant import QFUN, imatrix_chunks, load_imatrix
 from .seed import SeedCodec, bits_per_weight
 
 
@@ -264,6 +266,23 @@ def _joined_groups(names):
             found.setdefault((m[1], int(m[3])), {})[int(m[2])] = i
     return [[g[k] for k in range(1, cnt + 1)] for (_, cnt), g in found.items()
             if cnt > 1 and sorted(g) == list(range(1, cnt + 1))]
+
+
+def _order_groups(orders):
+    """the files' tensor orders (tuples of names) -> {a group's order: [its files' indices]}: a
+    file whose order is a subsequence of a longer one's goes in that file's group, so files with
+    only some of the tensors (quants without the MTP layer, the MTP layer alone) are streamed in
+    the same pass over the base"""
+    groups = {}
+    for k in sorted(range(len(orders)), key=lambda k: -len(orders[k])):
+        for g in groups:
+            it = iter(g)
+            if all(n in it for n in orders[k]):
+                groups[g].append(k)
+                break
+        else:
+            groups[orders[k]] = [k]
+    return {g: sorted(ks) for g, ks in groups.items()}
 
 
 class _Joined:
@@ -495,9 +514,9 @@ def _digest(b):
     return blake3.blake3(b, max_threads=blake3.blake3.AUTO if len(b) >= (64 << 20) else 1).digest()
 
 
-def _qr_job(T, args, seed, names):
+def _qr_job(T, args, seed, names, imx=None):
     """one QR batch coded (qr.encode); its tensors' regions (args[i][0]) zeroed after"""
-    part = qr.encode(T, args, seed)
+    part = qr.encode(T, args, seed, imx)
     for a in args:
         a[0][:] = 0
     return [T, names], part
@@ -505,6 +524,7 @@ def _qr_job(T, args, seed, names):
 
 _T = namedtuple("_T", "name type shape")    # what _predict needs of a tensor
 UNIT_W = 100                              # plan variants from here on: unit importance weights
+RECOV = 1000                              # variant k * RECOV + v: v with fitted importance set k (imxfit)
 
 
 class _Dequant:
@@ -552,6 +572,18 @@ def _quant_tensors(path):
     return [t for t in _gguf_tensors(path) if t.type in QFUN or t.type in (F32, F16, BF16)]
 
 
+def _gguf_meta(path=None, data=None):
+    """the key-value metadata of a GGUF file or buffer (header only), {} if it is not one"""
+    import mmap
+    try:
+        if data is not None:
+            return GGUF.from_bytes(data, light=True).meta
+        with open(path, "rb") as f, mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as mm:
+            return GGUF(data=mm, light=True).meta
+    except Exception:
+        return {}
+
+
 class M28RepoGPU:
     name = "M28 model repo: BF16 + quants re-derived on the GPU with llama.cpp quantisers + imatrix"
 
@@ -565,6 +597,7 @@ class M28RepoGPU:
         self.q8_files = set()                 # derived GGUFs stored with M21 (no base)
         self.seed_files = set()               # derived GGUFs that serve as a base (seed.py)
         self.stats = {"requant_exact": 0, "requant_diff": 0, "variant": 0, "xor": 0, "raw": 0}
+        self.imx_sets, self.file_set, self.cur_set, self.fit_wait = {}, {}, 0, {}   # fitted importance (_fit_plan)
         self.timing = {}
         self.verbose = False
 
@@ -803,10 +836,12 @@ class M28RepoGPU:
                 use(keys[i], o)
 
             srcs = [(self._src(self.by_name[n], lazy=True, dev=dev), ts[(n, ty, v)].shape[0]) for n, _, _ in keys]
-            # variant v: the quantiser's code variant v % UNIT_W, with unit weights from UNIT_W
-            ims = [self.imatrix.get(n) if v < UNIT_W else np.ones(ts[(n, ty, v)].shape[0], np.float32)
-                   for n, _, _ in keys]
-            self.gq.quantize_tensors(ty, srcs, ims, v % UNIT_W, on_result=got, device=device,
+            # variant v = k * RECOV + u: the quantiser's code variant u % UNIT_W, with fitted importance
+            # set k (k > 0), unit weights (u >= UNIT_W) or the repository's importance
+            k, u = divmod(v, RECOV)
+            ims = [self.imx_sets[k][n] if k else self.imatrix.get(n) if u < UNIT_W else
+                   np.ones(ts[(n, ty, v)].shape[0], np.float32) for n, _, _ in keys]
+            self.gq.quantize_tensors(ty, srcs, ims, u % UNIT_W, on_result=got, device=device,
                                      max_weights=1 << 27 if self.streaming else 1 << 28)
             if self.streaming:
                 _trim_cached()
@@ -839,6 +874,22 @@ class M28RepoGPU:
             seed[off[n]:off[n] + bt.nbytes] = self.base_dev[bt.offset:bt.offset + bt.nbytes]
         return seed, off
 
+    def _qr_extra(self, T, names):
+        """the grid types' further coder inputs for tensors `names`: (device importance matrices or
+        None, [(weights per row, offset in them or -1)]); for the other types no importance matrix"""
+        cols = [int(self.by_name[n].shape[0]) for n in names]
+        if T not in qr.GRID_TYPES:
+            return None, [(c, -1) for c in cols]
+        self.stats["qr_grid"] = self.stats.get("qr_grid", 0) + len(names)
+        out, parts, o = [], [], 0
+        for n, c in zip(names, cols):
+            e = self.imatrix.get(n)
+            if e is not None and len(e) == c:
+                out.append((c, o)); parts.append(np.asarray(e, np.float32)); o += c
+            else:
+                out.append((c, -1))
+        return (cp.asarray(np.concatenate(parts)) if parts else None), out
+
     def _again(self, wanted):
         """{name: prediction} of tensors this file already predicted once ([(tensor, variant)]):
         their expected uses are counted again first, so the cache keeps what later files need"""
@@ -862,9 +913,10 @@ class M28RepoGPU:
                 its = [ts[i] for i in bi]
                 pred = self._again([(t, choice[t.name]) for t, _, p in its if p is None])
                 seed, off = self._seed_dev([t.name for t, _, _ in its])
+                imx, ex = self._qr_extra(T, [t.name for t, _, _ in its])
                 parts.append(qr.encode(
-                    T, [(f, pred[t.name] if p is None else p, off[t.name], self.by_name[t.name].type)
-                        for t, f, p in its], seed))
+                    T, [(f, pred[t.name] if p is None else p, off[t.name], self.by_name[t.name].type, *e)
+                        for (t, f, p), e in zip(its, ex)], seed, imx))
                 meta.append([T, [t.name for t, _, _ in its]])
                 del seed, pred
                 _release()                      # a batch's temporaries must not pile up in the pool
@@ -900,8 +952,10 @@ class M28RepoGPU:
                         continue
                 pred = self._again([(t, choice[t.name]) for t, _, p in its if p is None])
                 seed, off = self._seed_dev([t.name for t, _, _ in its])
-                args = [(f, pred[t.name] if p is None else p, off[t.name], self.by_name[t.name].type) for t, f, p in its]
-                futs.append(pool.submit(_qr_job, T, args, seed, names))
+                imx, ex = self._qr_extra(T, names)
+                args = [(f, pred[t.name] if p is None else p, off[t.name], self.by_name[t.name].type, *e)
+                        for (t, f, p), e in zip(its, ex)]
+                futs.append(pool.submit(_qr_job, T, args, seed, names, imx))
                 if key is not None:
                     memo[key] = futs[-1]
         self.stats["qr"] = self.stats.get("qr", 0) + len(items)
@@ -923,7 +977,9 @@ class M28RepoGPU:
         """batch k of an unpacked QR chunk: pred[n] (the predictions of `names`, host or device
         arrays) -> the tensors (host arrays)"""
         seed, off = self._seed_dev(names)
-        out = qr.decode(T, ch[str(k)], [(pred[n], off[n], self.by_name[n].type) for n in names], seed)
+        imx, ex = self._qr_extra(T, names)
+        out = qr.decode(T, ch[str(k)], [(pred[n], off[n], self.by_name[n].type, *e) for n, e in zip(names, ex)],
+                        seed, imx)
         del seed
         host = to_host(out)
         o = 0
@@ -968,6 +1024,10 @@ class M28RepoGPU:
         qg = GGUF.from_bytes(data, light=True)
         self._use(self._best_base(qg))
         self._qr_chunk = None
+        self.cur_set = self.file_set.get(fi, 0)
+        if self.fit_wait.get(self.cur_set):
+            self._fit_from(self.cur_set, [t for t in qg.tensors if self._kind(t) == "rq"],
+                           lambda t: view[t.offset:t.offset + t.nbytes])
         if self.b is None:
             self.stats["raw"] += len(qg.tensors)
             return [], None
@@ -1012,6 +1072,8 @@ class M28RepoGPU:
             nv = len(VARIANTS.get(t.type, ()))
             out = [v0[t.name] + j for j in range(1, nv + 1)]
             if v0[t.name] == UNIT_W and t.type < 16:
+                out += list(range(nv + 1))
+            if v0[t.name] >= RECOV:             # fitted importance: the repository's too
                 out += list(range(nv + 1))
             return out
 
@@ -1092,8 +1154,9 @@ class M28RepoGPU:
                 self.stats["xor"] += 1
             else:
                 self.stats["requant_diff" if nonzero[t.name] else "requant_exact"] += 1
-                self.stats["variant"] += v % UNIT_W > 0
-                self.stats["unit_w"] = self.stats.get("unit_w", 0) + (v >= UNIT_W)
+                self.stats["variant"] += v % RECOV % UNIT_W > 0
+                self.stats["unit_w"] = self.stats.get("unit_w", 0) + (v % RECOV >= UNIT_W)
+                self.stats["imx_fitted"] = self.stats.get("imx_fitted", 0) + (v >= RECOV)
             plan.append([t.name, "qr" if t.name in isqr else k, v, t.type])
         self.stats["memo"] = self.stats.get("memo", 0) + len(hit)
         return plan, qr_items, choice
@@ -1148,6 +1211,121 @@ class M28RepoGPU:
     def _imatrix(ex):
         name = next((n for n in ex if n.startswith("imatrix")), None)
         return load_imatrix(ex[name]) if name else {}
+
+    # ------------------------------------------------------------------ fitted importance (imxfit.py)
+    # Files whose GGUF names an importance matrix other than the repository's (another chunk count)
+    # form a set k. The importance of every input their legacy-quant tensors share is fitted from
+    # the first such file as it is coded (its bytes are read then, the base tensors on the GPU):
+    # no extra pass over the base. Later files of the set are predicted with it from the start.
+    FIT_ROWS = 1 << 24                        # weights per piece of a tensor in the fit (GPU memory)
+
+    def _fit_plan(self, files, ex):
+        """the sets of files made with another importance matrix -> self.file_set {file index: k},
+        self.fit_wait {k: names whose importance is still to be fitted}, self.fit_sig {k: (chunk
+        count, dataset)}"""
+        self.file_set, self.fit_wait, self.fit_sig, self.fit_done = {}, {}, {}, {}
+        self.imx_sets = {}
+        name = next((n for n in ex if n.startswith("imatrix")), None)
+        pub = imatrix_chunks(ex[name]) if name and self.imatrix else None
+        if pub is None:
+            return
+        sigs = {}
+        for i, p in enumerate(files.values()):
+            meta = _gguf_meta(p)
+            cc = meta.get("quantize.imatrix.chunks_count")
+            if cc is not None and int(cc) != pub:
+                sigs.setdefault((int(cc), str(meta.get("quantize.imatrix.dataset", ""))), []).append(i)
+        self.by_input = {}                        # the published importance's bytes -> names sharing it
+        for n, e in self.imatrix.items():
+            self.by_input.setdefault(np.asarray(e, np.float32).tobytes(), []).append(n)
+        paths = list(files.values())
+        for k, (sig, idx) in enumerate(sigs.items(), 1):
+            self.fit_sig[k], self.imx_sets[k], self.fit_done[k] = sig, {}, []
+            self.file_set.update({i: k for i in idx})
+            # the inputs with a legacy-quant tensor in these files
+            self.fit_wait[k] = {n for i in idx for t in _gguf_tensors(paths[i]) if t.type in imxfit.LS_TYPES
+                                and t.name in self.imatrix
+                                for n in self.by_input[np.asarray(self.imatrix[t.name], np.float32).tobytes()]}
+
+    def _fit_from(self, k, tens, region):
+        """fit set k's importance of the inputs still waiting from this file's legacy-quant tensors
+        `tens` (region(t) -> their bytes), the current base on the GPU"""
+        wait = self.fit_wait.get(k)
+        groups = {}
+        for t in tens:
+            e, bt = self.imatrix.get(t.name), self.by_name.get(t.name)
+            if wait and t.name in wait and t.type in imxfit.LS_TYPES and e is not None and bt is not None                     and bt.type in (F32, F16, BF16) and len(e) == bt.shape[0]:
+                groups.setdefault(np.asarray(e, np.float32).tobytes(), []).append(t)
+        t0 = time.perf_counter()
+        for key, members in groups.items():
+            G = None
+            for t in members:
+                bt = self.by_name[t.name]
+                cols, nrow = int(bt.shape[0]), int(bt.shape[1])
+                _, qk, bs = QFUN[t.type]
+                rb, step = cols // qk * bs, max(1, self.FIT_ROWS // cols)
+                w = self._view(self.base_dev, bt)
+                f = region(t)
+                for r0 in range(0, nrow, step):
+                    r1 = min(nrow, r0 + step)
+                    x = w[r0 * cols:r1 * cols]
+                    x = (x.astype(cp.uint32) << 16).view(cp.float32) if bt.type == BF16 else x.astype(cp.float32)
+                    g = imxfit.ls_gram(self.gq, t.type, x.reshape(-1, cols), gpu2.h2d(f[r0 * rb:r1 * rb]))
+                    G = g if G is None else G + g
+                    del x, g
+            e0 = np.frombuffer(key, np.float32)
+            e = imxfit.ls_solve(G, e0)
+            del G
+            # kept where it reproduces more blocks (the last rows of the first tensor)
+            t = members[0]
+            bt = self.by_name[t.name]
+            cols, nrow = int(bt.shape[0]), int(bt.shape[1])
+            _, qk, bs = QFUN[t.type]
+            rb, n = cols // qk * bs, min(nrow, max(64, self.FIT_ROWS // 8 // cols))
+            x = self._view(self.base_dev, bt)[(nrow - n) * cols:]
+            x = (x.astype(cp.uint32) << 16).view(cp.float32) if bt.type == BF16 else x.astype(cp.float32)
+            f = gpu2.h2d(region(t)[(nrow - n) * rb:])
+            before, after = (imxfit.equal_blocks(self.gq, t.type, x.reshape(n, cols), f, v) for v in (e0, e))
+            del x, f
+            names = self.by_input[key]
+            wait.difference_update(names)
+            if after > before + 0.005:
+                for nm in names:
+                    self.imx_sets[k][nm] = e
+                self.fit_done[k].append((names, e, e0, before, after))
+        _release()
+        self.timing["importance fit"] = self.timing.get("importance fit", 0) + time.perf_counter() - t0
+
+    def _fit_chunk(self):
+        """the fitted importance sets as an archive chunk and manifest entry, or None"""
+        meta, data = [], []
+        for k in sorted(self.fit_done):
+            done = self.fit_done[k]
+            if self.verbose and done:
+                cc, n = self.fit_sig[k][0], len(done)
+                print(f"  importance matrix of {sum(v == k for v in self.file_set.values())} file(s) ({cc} chunks) "
+                      f"fitted for {n} input(s): blocks equal {100 * sum(d[3] for d in done) / n:.1f}% -> "
+                      f"{100 * sum(d[4] for d in done) / n:.1f}% in {self.timing.get('importance fit', 0):.1f} s", flush=True)
+            meta.append({"chunks": self.fit_sig[k][0], "dataset": self.fit_sig[k][1], "groups": [d[0] for d in done]})
+            data += [(e.view(np.uint32) ^ e0.view(np.uint32)).tobytes() for _, e, e0, _, _ in done]
+        self.stats["imx_fit"] = sum(len(m["groups"]) for m in meta)
+        if not self.stats["imx_fit"]:
+            return None
+        return pack({"meta": zstd_c(json.dumps(meta).encode()), "data": zstd_c(b"".join(data), 19)}),             {"chunk": "imx", "sets": len(meta)}
+
+    def _load_imx(self, buf):
+        """the fitted importance sets of an archive (_fit_chunk) -> self.imx_sets"""
+        ch = unpack(buf)
+        meta = json.loads(zstd_d(ch["meta"]))
+        raw, o = zstd_d(ch["data"]), 0
+        for k, m in enumerate(meta, 1):
+            self.imx_sets[k] = {}
+            for names in m["groups"]:
+                e0 = np.asarray(self.imatrix[names[0]], np.float32)
+                e = (np.frombuffer(raw, np.uint32, len(e0), o) ^ e0.view(np.uint32)).view(np.float32)
+                o += e.nbytes
+                for n in names:
+                    self.imx_sets[k][n] = e
 
     BUNDLE_MAX = 64 << 20                     # extra files up to this size go into the LZMA bundle
 
@@ -1319,7 +1497,9 @@ class M28RepoGPU:
             del data, c
         self._setup(kept, self._imatrix(ex))
         self._join(joined)
-        self._expect((t.name, t.type, 0) for p in files.values() for t in _quant_tensors(p))
+        self._fit_plan(files, ex)
+        self._expect((t.name, t.type, self._v0(t, "rq", self.file_set.get(i, 0)) if t.type in QFUN else 0)
+                     for i, p in enumerate(files.values()) for t in _quant_tensors(p))
         self.seen_t, self.keep_until, self.live = {}, {}, []      # duplicate tensors (_dedup)
         if self.verbose:
             print(f"  bases coded{_mem()}", flush=True)
@@ -1446,6 +1626,14 @@ class M28RepoGPU:
         rd.shutdown()
         put_bases(wait=True)
         bp.shutdown()
+        if self.stats.get("qr_grid"):
+            manifest["needs"] = "0.3.0"           # QR-coded IQ grid types: the first version that reads them
+        fitted = self._fit_chunk()
+        if fitted:
+            put(fitted[1]["chunk"], fitted[0])
+            self.sizes["fitted importance"] = len(fitted[0])
+            manifest["imx_fit"] = fitted[1]       # fitted importance sets (_fit_plan)
+            manifest["needs"] = "0.3.0"
         put("manifest", zstd_c(json.dumps(manifest).encode()))
         self.bases = self.base_dev = None
         _release(pinned=True)
@@ -1492,7 +1680,7 @@ class M28RepoGPU:
         plus the indices of the files that cannot (archives of older versions: duplicate tensors,
         QR batches spanning the whole file)"""
         by_name = self.bases[b][2]
-        groups, rejected = {}, set()
+        found, rejected = [], set()
         limit = 4 * self._window_bytes()
         for i, m in files:
             plan = m["plan"]
@@ -1515,14 +1703,16 @@ class M28RepoGPU:
             if any(e[1] == "qr" for e in plan):
                 qch = unpack(reader.get(f"q{i}"))
                 qmeta = json.loads(zstd_d(qch["meta"]))
-            groups.setdefault(order, []).append((i, m, tens, res, qch, qmeta))
+            found.append((order, (i, m, tens, res, qch, qmeta)))
         out = []
-        for order, gf in groups.items():
+        for order, ks in _order_groups([o for o, _ in found]).items():
+            gf = [found[k][1] for k in ks]
             pos = {n: p for p, n in enumerate(order)}
             keep = [(min(pos[n] for n in names), max(pos[n] for n in names)) for f in gf for _, names in f[5]]
             nbytes = [by_name[n].nbytes for n in order]
             plans = [{e[0]: e for e in f[1]["plan"]} for f in gf]
-            pred = [sum({(f[2][n].type, pl[n][2]): f[2][n].nbytes for f, pl in zip(gf, plans)}.values()) for n in order]
+            pred = [sum({(f[2][n].type, pl[n][2]): f[2][n].nbytes for f, pl in zip(gf, plans) if n in pl}.values())
+                    for n in order]
             wins = self._windows(nbytes, keep, self._window_bytes(), pred)
             if any(sum(nbytes[a:z]) > limit for a, z in wins):
                 rejected.update(f[0] for f in gf)
@@ -1604,8 +1794,12 @@ class M28RepoGPU:
             pos[(bt.offset, bt.offset + bt.nbytes)] = where[ranges[k][0]] + bt.offset - ranges[k][0]
         return host, pos
 
-    def _v0(self, t, kind):
-        """the variant a tensor is first predicted with (see _residual_tensors)"""
+    def _v0(self, t, kind, k=None):
+        """the variant a tensor is first predicted with (see _residual_tensors); k: the file's
+        fitted importance set (default: the file being coded's)"""
+        k = self.cur_set if k is None else k
+        if kind == "rq" and k and t.name in self.imx_sets[k]:
+            return k * RECOV
         return UNIT_W if kind == "rq" and self.imatrix.get(t.name) is None else 0
 
     def _prewarm(self, wanted, dev=None):
@@ -1635,7 +1829,7 @@ class M28RepoGPU:
         import types
         self._use(b)
         by_name, zdict = self.by_name, self.zdict
-        groups = {}
+        found = []                                # (tensor order, file state)
         for i, name, fpath in items:
             ts = [(t, self._kind(t)) for t in _gguf_tensors(fpath)]
             self.stats["raw"] += sum(k is None for _, k in ts)
@@ -1646,9 +1840,10 @@ class M28RepoGPU:
                 i=i, name=name, path=fpath, size=os.path.getsize(fpath), tens={t.name: t for t, _ in ts},
                 kind={t.name: k for t, k in ts}, start=ts[0][0].offset, pos=0, plan=[], qmeta=[], qparts=[],
                 comp=None, spill=_Spill(self.scratch), lane=ThreadPoolExecutor(1), qjobs=[],
-                hlane=ThreadPoolExecutor(1),
+                hlane=ThreadPoolExecutor(1), k=self.file_set.get(i, 0),
                 hash=on_stream(name) if on_stream else None)
-            groups.setdefault(tuple(t.name for t, _ in ts), []).append(st)
+            found.append((tuple(t.name for t, _ in ts), st))
+        groups = {order: [found[k][1] for k in ks] for order, ks in _order_groups([o for o, _ in found]).items()}
         out, feeds = {}, deque()
         qpool = ThreadPoolExecutor(1)             # the QR coder, overlapping the next file's work
 
@@ -1659,7 +1854,7 @@ class M28RepoGPU:
             buf = _read_range(st.path, s0, s1 - s0, once=True)
             hf = st.hlane.submit(st.hash, buf) if st.hash else None
             tf = {n: _POOL.submit(_digest, buf[st.tens[n].offset - s0:st.tens[n].offset - s0 + st.tens[n].nbytes])
-                  for n in names}
+                  for n in names if n in st.tens}
             return buf, hf, tf
 
         def compress(st, span, wait):
@@ -1668,6 +1863,8 @@ class M28RepoGPU:
             st.spill.write(st.comp.compress(span))
 
         def feed(st, span, wait=()):
+            if not len(span):                   # (none of the file's tensors in the window)
+                return
             if st.comp is None:
                 # the level as zc() picks it for a whole file, judged from the first span's tensors
                 v = span[max(0, st.start - st.pos):]
@@ -1683,8 +1880,8 @@ class M28RepoGPU:
         self.streaming = True
         for order, sts in groups.items():
             # the window's distinct first predictions (each file's tensors, repeats once)
-            pred = [sum({(st.tens[n].type, self._v0(st.tens[n], st.kind[n])): st.tens[n].nbytes for st in sts}.values())
-                    for n in order]
+            pred = [sum({(st.tens[n].type, self._v0(st.tens[n], st.kind[n], st.k)): st.tens[n].nbytes
+                         for st in sts if n in st.tens}.values()) for n in order]
             wlim = self._window_bytes()
             wins = self._windows([by_name[n].nbytes for n in order], (), wlim, pred)
             wb = [sum(by_name[n].nbytes for n in order[a:z]) for a, z in wins]
@@ -1693,7 +1890,7 @@ class M28RepoGPU:
             for w, (a, z) in enumerate(wins):
                 for st in sts:
                     end = st.size if w == len(wins) - 1 else \
-                        max(st.tens[n].offset + st.tens[n].nbytes for n in order[a:z])
+                        max((st.tens[n].offset + st.tens[n].nbytes for n in order[a:z] if n in st.tens), default=pos[st.i])
                     jobs.append((w, st, pos[st.i], end)); pos[st.i] = end
             def prepare(w, read):
                 """window w on the GPU, its files' first predictions made: in the GPU thread, while
@@ -1704,7 +1901,9 @@ class M28RepoGPU:
                 for key, p in where.items():
                     win.add(key, p)
                 names = order[wins[w][0]:wins[w][1]]
-                self._prewarm([(st.tens[n], self._v0(st.tens[n], st.kind[n])) for st in sts for n in names], win)
+                # (not the tensors whose importance is fitted when their file comes: _fit_from)
+                self._prewarm([(st.tens[n], self._v0(st.tens[n], st.kind[n], st.k)) for st in sts for n in names
+                               if n in st.tens and n not in self.fit_wait.get(st.k, ())], win)
                 _release(device=True)           # (three threads use the GPU: its pool must not hoard)
                 return win
 
@@ -1743,8 +1942,13 @@ class M28RepoGPU:
                             hf.result()             # hashed before it is modified
                         hashes = {n: f.result() for n, f in tf.items()}
                         tw["span wait"] += time.perf_counter()
-                        plan, qitems, choice = self._residual_tensors(
-                            span, st.pos, [(st.tens[n], st.kind[n]) for n in names], len(span), memo, hashes)
+                        mine = [(st.tens[n], st.kind[n]) for n in names if n in st.tens]
+                        self.cur_set = st.k
+                        if self.fit_wait.get(st.k):
+                            self._fit_from(st.k, [t for t, kd in mine if kd == "rq"],
+                                           lambda t: span[t.offset - st.pos:t.offset - st.pos + t.nbytes])
+                        plan, qitems, choice = self._residual_tensors(span, st.pos, mine, len(span), memo, hashes) \
+                            if mine else ([], [], {})
                         qf = self._qr_submit(qpool, qitems, choice, hashes, qmemo) if qitems else []
                         st.qjobs += qf; wq += qf
                         while sum(not f.done() for f in wq_prev + wq) > self.QR_BACKLOG:
@@ -1801,7 +2005,8 @@ class M28RepoGPU:
         jobs, pos = [], [0] * len(gf)         # (file, span start, span end) in processing order
         for w, (a, z) in enumerate(wins):
             for k, (i, m, tens, *_) in enumerate(gf):
-                end = m["size"] if w == len(wins) - 1 else max(tens[n].offset + tens[n].nbytes for n in order[a:z])
+                end = m["size"] if w == len(wins) - 1 else \
+                    max((tens[n].offset + tens[n].nbytes for n in order[a:z] if n in plans[k]), default=pos[k])
                 jobs.append((k, pos[k], end)); pos[k] = end
         home = self.bases[b]
         self.streaming = True
@@ -1824,6 +2029,8 @@ class M28RepoGPU:
             qkeys, host, room = {}, [], min(self.QPRED_GPU, cp.cuda.runtime.memGetInfo()[1] // 24)
             for k, f in enumerate(gf):
                 for n in names:
+                    if n not in plans[k]:
+                        continue
                     e, t = plans[k][n], f[2][n]
                     key = (n, t.type, e[2])
                     if e[1] == "qr" and (key in qkeys or t.nbytes <= room):
@@ -1887,7 +2094,7 @@ class M28RepoGPU:
                         t = tens[key[0]]
                         xj.extend(_xor_async(span[t.offset - p0:t.offset - p0 + t.nbytes], p, check=False))
 
-                    self._predict([(tens[n], plan[n][2]) for n in names if plan[n][1] != "qr"], xor)
+                    self._predict([(tens[n], plan[n][2]) for n in names if n in plan and plan[n][1] != "qr"], xor)
                     for q, (T, qn) in enumerate(qmeta):
                         if qn[0] in inwin:
                             bk = bkeys[i][q]
@@ -2060,6 +2267,9 @@ class M28RepoGPU:
         if any(m["base"] is not None for _, m in files):
             self._setup(bases, self._imatrix(ex))
             self._join(joined)
+            self.imx_sets = {}
+            if manifest.get("imx_fit"):
+                self._load_imx(get(manifest["imx_fit"]["chunk"]))
             if all(len(e) > 3 for _, m in files for e in m["plan"]):     # archives that record the types
                 self._expect((e[0], e[3], e[2]) for _, m in files for e in m["plan"] if e[1] != "dup")
         sources = {k[0] for k in last_use}      # files holding tensors that others copy: not streamed

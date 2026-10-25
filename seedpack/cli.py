@@ -199,6 +199,8 @@ def gguf_role(path):
             if len(head) < size:
                 return None                  # not a parsable GGUF: store as a plain file
             size *= 4
+    if g.meta.get("general.type") == "imatrix":
+        return None                          # an importance matrix (imatrix_unsloth.gguf): a plain file
     total = sum(t.nbytes for t in g.tensors) or 1
     bf16 = sum(t.nbytes for t in g.tensors if t.type == GGML_BF16)
     if g.meta.get("quantize.imatrix.file"):

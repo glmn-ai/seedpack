@@ -74,6 +74,23 @@ def load_imatrix(path_or_bytes, divide=True):
     return out
 
 
+def imatrix_chunks(buf):
+    """the number of chunks an imatrix was computed on (GGUF: imatrix.chunk_count; legacy .dat:
+    the count llama-imatrix writes after the entries), None if not recorded"""
+    if buf[:4] == b"GGUF":
+        from .gguf_reader import GGUF
+        c = GGUF.from_bytes(buf, light=True).meta.get("imatrix.chunk_count")
+        return None if c is None else int(c)
+    try:
+        (n,), pos = struct.unpack_from("<i", buf), 4
+        for _ in range(n):
+            (ln,) = struct.unpack_from("<i", buf, pos); pos += 4 + ln
+            _, nval = struct.unpack_from("<ii", buf, pos); pos += 8 + 4 * nval
+        return struct.unpack_from("<i", buf, pos)[0] if len(buf) >= pos + 4 else None
+    except struct.error:
+        return None
+
+
 def _load_imatrix_gguf(buf):
     """GGUF imatrix: per tensor '<name>.in_sum2' (n_mat x ne0) and '<name>.counts' (n_mat);
     value = in_sum2 / count per matrix, 1 where the matrix never saw a token"""

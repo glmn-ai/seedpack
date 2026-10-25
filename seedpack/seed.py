@@ -99,7 +99,7 @@ class SeedCodec:
             # where it beats zstd, the rest zstd
             selfq = {}
             for t in other:
-                if t.type in qr.QR_TYPES and t.shape[0] % qr.QK[t.type] == 0:
+                if t.type in qr.SELF_TYPES and t.shape[0] % qr.QK[t.type] == 0:
                     selfq.setdefault(t.type, []).append(t)
             sq = []
             for T, ts in selfq.items():

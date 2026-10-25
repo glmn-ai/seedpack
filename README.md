@@ -72,6 +72,7 @@ seedpack x qwen3.seedpack "*IQ1*" README.md -o out
 
 File roles are detected automatically:
 - a GGUF with more than half of its weights in BF16 is a base (the model, mmproj);
+- a model split into shards (`NAME-00001-of-00002.gguf`, ..., as llama.cpp's `gguf-split` writes them) counts as one base: each shard is stored and restored as its own file, and the quants are grown from all of them together (since 0.3.0);
 - the other GGUFs are derived from the bases; quants without a BF16 model are derived from the highest quant (the seed, `seedpack/seed.py`);
 - identical tensors in different files are stored once;
 - all other files are compressed with LZMA or zstd.
@@ -101,8 +102,9 @@ Publishing: `python -m build`, then `twine upload dist/*`.
 - `seedpack/bf16v2.py` — the BF16 codec (R2); `seedpack/gpu_bf16.py` — M24.
 - `seedpack/gpu3.py` (based on `seedpack/gpu2.py`) — M21/M22: a Q8_0 codec without a base (context rANS, row prediction from similar rows).
 - `seedpack/seed.py` — the seed: the highest quant of a set without BF16, and its codec.
-- `seedpack/qr.py` — QR: GPU coding of the residual with the quantizer's probabilities (scales, then codes), and the same coder without a seed for single files.
+- `seedpack/qr.py` — QR: GPU coding of the residual with the quantizer's probabilities (scales, then codes; for the IQ grid types, the grid point's rank by distance to the seed, then the signs), and the same coder without a seed for single files.
 - `seedpack/requant.py` — CPU quantizers via `ggmlq.dll`, imatrix loading (legacy `.dat` and GGUF).
+- `seedpack/imxfit.py` — fitting back the imatrix a quant was made with when the repository publishes another one (least squares on the legacy quants' block scales).
 - `bench*.py`, `results*.json` — measurements of all methods M1–M29; `research/` — codec research.
 - `bench_competitors/` — comparison with other archivers: `run_bench.py`, `quant_sets.py`, `vs_lmz.py`; `hf_bench.py` and `hf_card.py` — the benchmark and the card of the Qwen3-0.6B release on Hugging Face.
 - `assets/` — the logo (`logo.svg`), the banner (`banner.png`, source `banner.html`) and the stats banners of the Hugging Face releases (`stats-*.png`); `bench_competitors/hf_banners.py` renders and compresses them.
@@ -112,7 +114,7 @@ Publishing: `python -m build`, then `twine upload dist/*`.
 
 - An NVIDIA GPU is required.
 - Quants without a BF16 model: the highest quant becomes the seed (most bits per weight: UD-Q8_K_XL, Q8_0, … Q4); its tensors are dequantized and the other quants are derived from them. Without an imatrix the quantizers run with unit weights or without weights, whichever gives the smaller residual for each tensor. The Qwen3.5-2B quant set without BF16 and imatrix (21 files, 28 GB) compresses to 17%; lmz reaches 40%.
-- If the published imatrix differs from the one used for quantization (as with Qwen3.5), some blocks are predicted inexactly. Correctness does not suffer, only the size grows: for Qwen3.5-2B all quants together cost 33 MB.
+- If the published imatrix differs from the one used for quantization (as with Qwen3.5), some blocks are predicted inexactly. Correctness does not suffer, only the size grows: for Qwen3.5-2B all quants together cost 33 MB. When a quant's GGUF names another imatrix (a different chunk count, as Unsloth's plain Q4_0 / Q4_1 do), that imatrix is fitted back from the quant itself and stored in the archive.
 - Tested on Windows 10 and Ubuntu (WSL2) with an RTX 5070; other GPUs are on the roadmap (ROADMAP, item 22).
 
 ## License
