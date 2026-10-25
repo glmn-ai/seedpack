@@ -5,7 +5,8 @@ Writes OUT_DIR/README.md and OUT_DIR/assets/neurosquad-banner.png, seedpack-benc
 banner (NeuroSquad, SeedPack, the Qwen3.8-27B result) and the benchmarks (the three releases, the
 archivers compared on all of unsloth/Qwen3-0.6B-GGUF, the 27B timings). Sizes from hf_banners.RELEASES,
 the 27B archive's parts and timings from results_hf27b.json. Rendered and compressed as the release
-banners (hf_banners.py: headless Chrome, imagequant, oxipng).
+banners (hf_banners.py: headless Chrome, imagequant, oxipng), on a narrower page: the organization
+card's column shows them at about 430 px.
 """
 import html
 import json
@@ -17,7 +18,10 @@ from PIL import Image
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-from hf_banners import ASSETS, PAGE, RELEASES, render, size, squeeze, uri  # noqa: E402
+import hf_banners  # noqa: E402
+from hf_banners import ASSETS, RELEASES, render, size, squeeze, uri  # noqa: E402
+
+PAGE = 860                                     # CSS width: the card's column shows the banners about 430 px wide
 
 ORG = "neurosquad"
 SPACE = f"{ORG}/README"
@@ -63,49 +67,48 @@ def hero():
 <html><head><meta charset="utf-8">
 <link href="https://fonts.googleapis.com/css2?family=Exo+2:ital,wght@0,500;0,600;1,800&display=block" rel="stylesheet">
 <style>{STYLE}
-  .b {{ height: 400px; display: flex; align-items: center; padding: 0 56px 0 60px; gap: 44px; }}
-  .b::before {{ content: ""; position: absolute; left: -160px; top: -220px; width: 720px; height: 720px;
+  .b {{ padding: 40px 46px 44px; }}
+  .b::before {{ content: ""; position: absolute; left: -200px; top: -260px; width: 760px; height: 760px;
                 background: radial-gradient(closest-side, rgba(110, 214, 80, .15), rgba(110, 214, 80, 0)); }}
-  .b::after {{ content: ""; position: absolute; right: -200px; bottom: -300px; width: 760px; height: 760px;
+  .b::after {{ content: ""; position: absolute; right: -240px; bottom: -320px; width: 760px; height: 760px;
                background: radial-gradient(closest-side, rgba(41, 192, 116, .10), rgba(41, 192, 116, 0)); }}
-  .left {{ flex: 1; }}
-  .org {{ display: flex; align-items: center; gap: 16px; font-size: 27px; font-weight: 600; letter-spacing: 4px; color: #C9D3CD; }}
-  .org img {{ width: 52px; height: 52px; border-radius: 12px; }}
-  h1 {{ margin: 22px 0 0; display: flex; align-items: center; gap: 20px; font-size: 104px; line-height: 1; font-weight: 800;
+  .org {{ display: flex; align-items: center; gap: 16px; font-size: 28px; font-weight: 600; letter-spacing: 5px; color: #C9D3CD; }}
+  .org img {{ width: 56px; height: 56px; border-radius: 13px; }}
+  h1 {{ margin: 26px 0 0; display: flex; align-items: center; gap: 22px; font-size: 118px; line-height: 1; font-weight: 800;
         font-style: italic; letter-spacing: -1px; }}
-  h1 img {{ width: 92px; height: 92px; }}
-  .sub {{ margin: 18px 0 0; font-size: 29px; font-weight: 500; white-space: nowrap; }}
-  .tags {{ display: flex; gap: 10px; margin-top: 24px; }}
-  .tags span {{ font-size: 19px; font-weight: 600; color: #BFE7A6; background: #16211A; border: 2px solid #2A3A2C;
-                border-radius: 999px; padding: 5px 14px 6px; }}
-  .card {{ flex: 0 0 468px; box-sizing: border-box; border-radius: 24px; padding: 26px 32px 28px;
-           background: linear-gradient(180deg, #17221A, #111814); border: 2px solid #33502C;
-           box-shadow: 0 0 40px rgba(110, 214, 80, .10); }}
-  .card .m {{ font-size: 34px; font-weight: 800; font-style: italic; }}
-  .card .s {{ margin-top: 2px; font-size: 20px; font-weight: 500; color: #8C9891; white-space: nowrap; }}
-  .card .from {{ margin-top: 18px; font-size: 25px; font-weight: 500; color: #A9B5AE; white-space: nowrap; }}
+  h1 img {{ width: 104px; height: 104px; }}
+  .sub {{ margin: 16px 0 0; font-size: 32px; font-weight: 500; }}
+  .card {{ margin-top: 30px; display: flex; align-items: center; justify-content: space-between; gap: 24px;
+           border-radius: 24px; padding: 24px 30px 26px; background: linear-gradient(180deg, #17221A, #111814);
+           border: 2px solid #33502C; box-shadow: 0 0 40px rgba(110, 214, 80, .10); }}
+  .card .m {{ font-size: 40px; font-weight: 800; font-style: italic; }}
+  .card .s {{ margin-top: 2px; font-size: 22px; font-weight: 500; color: #8C9891; }}
+  .card .from {{ margin-top: 14px; font-size: 28px; font-weight: 500; color: #A9B5AE; white-space: nowrap; }}
   .card .from s {{ text-decoration-thickness: 2px; text-decoration-color: rgba(169, 181, 174, .6); }}
-  .card .to {{ font-size: 74px; line-height: 1; font-weight: 800; font-style: italic; margin-top: 4px; }}
-  .card .x {{ margin-top: 12px; font-size: 23px; font-weight: 600; color: #E8EEEA; white-space: nowrap; }}
+  .card .r {{ text-align: right; }}
+  .card .to {{ font-size: 86px; line-height: 1; font-weight: 800; font-style: italic; white-space: nowrap; }}
+  .card .x {{ margin-top: 8px; font-size: 26px; font-weight: 600; color: #E8EEEA; white-space: nowrap; }}
   .card .x b {{ font-weight: 800; }}
-  .card .k {{ margin-top: 4px; font-size: 19px; font-weight: 500; color: #8C9891; white-space: nowrap; }}
+  .foot {{ margin-top: 20px; font-size: 24px; font-weight: 500; color: #8C9891; }}
+  .foot b {{ color: #BFE7A6; font-weight: 600; }}
 </style></head>
 <body>
 <div class="b">
-  <div class="left">
-    <div class="org"><img src="{uri(os.path.join(ASSETS, "neurosquad.png"))}" alt="">NEUROSQUAD</div>
-    <h1><img src="{uri(os.path.join(ASSETS, "logo.svg"))}" alt=""><span>Seed<span class="g">Pack</span></span></h1>
-    <p class="sub muted">Lossless GPU archiver for GGUF repositories</p>
-    <div class="tags"><span>BF16 + every quant in one file</span><span>byte for byte</span><span>open source</span></div>
-  </div>
+  <div class="org"><img src="{uri(os.path.join(ASSETS, "neurosquad.png"))}" alt="">NEUROSQUAD</div>
+  <h1><img src="{uri(os.path.join(ASSETS, "logo.svg"))}" alt=""><span>Seed<span class="g">Pack</span></span></h1>
+  <p class="sub muted">Lossless GPU archiver for GGUF model repositories</p>
   <div class="card">
-    <div class="m">{html.escape(big["model"])}</div>
-    <div class="s">{html.escape(big["src"])} · the whole repository</div>
-    <div class="from"><s>{gb(big["n_in"])}</s> · {big["n_files"]} files</div>
-    <div class="to g">{gb(big["archive"])}</div>
-    <div class="x"><b>{ratio:.1f}×</b> smaller{" · below its BF16 alone" if big["archive"] < bf16_27 else ""}</div>
-    <div class="k">every file restored byte for byte</div>
+    <div>
+      <div class="m">{html.escape(big["model"])}</div>
+      <div class="s">{html.escape(big["src"])}</div>
+      <div class="from"><s>{gb(big["n_in"])}</s> · {big["n_files"]} files</div>
+    </div>
+    <div class="r">
+      <div class="to g">{gb(big["archive"])}</div>
+      <div class="x"><b>{ratio:.1f}×</b> smaller</div>
+    </div>
   </div>
+  <div class="foot"><b>BF16 + every quant in one file</b> · every byte restored · open source</div>
 </div>
 </body></html>
 """
@@ -117,7 +120,7 @@ def bench():
         pct = 100 * r["archive"] / r["n_in"]
         rows.append(f"""
     <div class="rel">
-      <div class="rn"><b>{html.escape(r["model"])}</b><span>BF16 + {r["n_quants"]} quants · {r["n_files"]} files</span></div>
+      <div class="rn"><b>{html.escape(r["model"])}</b><span>BF16 + {r["n_quants"]} quants</span></div>
       <div class="track"><i style="width:{pct:.3f}%"></i><em>{gb(r["n_in"])} → <b>{gb(r["archive"])}</b></em></div>
       <div class="rx g">{r["n_in"] / r["archive"]:.1f}×</div>
     </div>""")
@@ -129,8 +132,8 @@ def bench():
       <div class="ar{" me" if me else ""}"><span class="al">{html.escape(lab)}</span>
         <div class="at"><i style="width:{pct:.3f}%"></i></div><span class="av">{pct:.1f}%</span></div>""")
     tiles = [(f"Pack all {gb(big['n_in'])}", f"{t27['pack_s'] / 60:.1f}{NB}min", f"{big['n_in'] / t27['pack_s'] / 1e6:,.0f}{NB}MB/s"),
-             ("Peak GPU memory", f"{t27['peak_vram_pack_gb']:.1f}{NB}GB", "on a 12 GB card, the model 4.5× bigger"),
-             ("Shared tensors stored once", f"{t27['references']:,}", "references between the quants")]
+             ("Peak GPU memory", f"{t27['peak_vram_pack_gb']:.1f}{NB}GB", "12 GB card, 54.7 GB model"),
+             ("Stored once", f"{t27['references']:,}", "tensors the quants share")]
     cells = "".join(f"""<div class="sp"><div class="sl">{html.escape(lab)}</div><div class="sv">{val}</div>
           <div class="ss">{html.escape(sub)}</div></div>""" for lab, val, sub in tiles)
     speed = f"""
@@ -140,15 +143,15 @@ def bench():
 <html><head><meta charset="utf-8">
 <link href="https://fonts.googleapis.com/css2?family=Exo+2:ital,wght@0,500;0,600;1,800&display=block" rel="stylesheet">
 <style>{STYLE}
-  .b {{ padding: 40px 56px 46px; }}
+  .b {{ padding: 36px 44px 42px; }}
   .b::before {{ content: ""; position: absolute; right: -200px; top: -280px; width: 760px; height: 760px;
                 background: radial-gradient(closest-side, rgba(110, 214, 80, .12), rgba(110, 214, 80, 0)); }}
   h1 {{ margin: 0; font-size: 56px; line-height: 1; font-weight: 800; font-style: italic; }}
   h2 {{ margin: 34px 0 16px; font-size: 25px; font-weight: 600; color: #C9D3CD; }}
   h2 small {{ font-size: 20px; font-weight: 500; color: #8C9891; }}
   .rel {{ display: flex; align-items: center; gap: 22px; margin-top: 14px; }}
-  .rn {{ flex: 0 0 300px; }}
-  .rn b {{ display: block; font-size: 29px; font-weight: 800; font-style: italic; }}
+  .rn {{ flex: 0 0 214px; }}
+  .rn b {{ display: block; font-size: 28px; white-space: nowrap; font-weight: 800; font-style: italic; }}
   .rn span {{ font-size: 18px; font-weight: 500; color: #8C9891; }}
   .track {{ flex: 1; position: relative; height: 46px; border-radius: 10px; background: #1A2420; border: 2px solid #26312B; }}
   .track i {{ position: absolute; left: 0; top: 0; bottom: 0; border-radius: 8px; background: linear-gradient(90deg, #9BE34A, #29C074);
@@ -156,9 +159,9 @@ def bench():
   .track em {{ position: absolute; left: 13%; top: 0; bottom: 0; display: flex; align-items: center; font-style: normal;
                font-size: 22px; font-weight: 500; color: #A9B5AE; }}
   .track em b {{ margin-left: 8px; color: #fff; font-weight: 600; }}
-  .rx {{ flex: 0 0 118px; text-align: right; font-size: 44px; font-weight: 800; font-style: italic; }}
+  .rx {{ flex: 0 0 104px; text-align: right; font-size: 40px; font-weight: 800; font-style: italic; }}
   .ar {{ display: flex; align-items: center; gap: 18px; margin-top: 9px; }}
-  .al {{ flex: 0 0 230px; font-size: 22px; font-weight: 500; color: #C9D3CD; }}
+  .al {{ flex: 0 0 196px; font-size: 22px; font-weight: 500; color: #C9D3CD; }}
   .at {{ flex: 1; height: 26px; border-radius: 6px; background: #161E1A; }}
   .at i {{ display: block; height: 100%; border-radius: 6px; background: #3A4741; }}
   .av {{ flex: 0 0 86px; text-align: right; font-size: 23px; font-weight: 600; color: #A9B5AE; }}
@@ -174,9 +177,9 @@ def bench():
 <body>
 <div class="b">
   <h1>Seed<span class="g">Pack</span> benchmarks</h1>
-  <h2>Whole Unsloth repositories in one archive <small>· bar = archive size, full width = the original</small></h2>
+  <h2>Whole Unsloth repositories <small>· full bar = the original</small></h2>
   {"".join(rows)}
-  <h2>All of unsloth/Qwen3-0.6B-GGUF ({gb(res06["hf-0.6b | SeedPack"]["size"])}) with other archivers <small>· archive size, lower is better</small></h2>
+  <h2>Other archivers on unsloth/Qwen3-0.6B-GGUF <small>· lower is better</small></h2>
   <div class="ars">{"".join(bars)}
   </div>{speed}
 </div>
@@ -185,6 +188,7 @@ def bench():
 
 
 os.makedirs(os.path.join(out_dir, "assets"), exist_ok=True)
+hf_banners.PAGE, hf_banners.SHOWN = PAGE, 430
 with tempfile.TemporaryDirectory() as tmp:
     for name, page in (("neurosquad-banner", hero()), ("seedpack-benchmarks", bench())):
         src = os.path.join(tmp, name + ".html")
@@ -198,9 +202,8 @@ with tempfile.TemporaryDirectory() as tmp:
 ud = [n for n in b27 if "-UD-" in n]
 img = f"https://huggingface.co/spaces/{SPACE}/resolve/main/assets"
 link = {r["model"]: f"https://huggingface.co/{ORG}/{r['model']}-SEEDPACK" for r in rels}
-table = "\n".join(f"| [{r['model']}-SEEDPACK]({link[r['model']]}) | [{r['src']}](https://huggingface.co/{r['src']}), "
-                   f"{r['n_files']} files | {gb(r['n_in'])} | **{gb(r['archive'])}** | {r['n_in'] / r['archive']:.1f}× |"
-                   for r in reversed(rels))
+table = "\n".join(f"| [{r['model']}]({link[r['model']]}) | {gb(r['n_in'])} → **{gb(r['archive'])}** | "
+                   f"{r['n_in'] / r['archive']:.1f}× |" for r in reversed(rels))
 card = f"""---
 title: NeuroSquad
 emoji: 🌱
@@ -234,8 +237,10 @@ All of [{big['src']}](https://huggingface.co/{big['src']}) — the BF16 model in
 
 ### Releases
 
-| Archive | Original repository | Original | Archive | Smaller |
-|---|---|---:|---:|---:|
+Each archive holds a whole Unsloth repository (`unsloth/<model>-GGUF`): the BF16 model, every quant and the rest of its files.
+
+| Model | Repository → archive | Smaller |
+|---|---:|---:|
 {table}
 
 ### Try it
