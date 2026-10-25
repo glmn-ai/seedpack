@@ -6,7 +6,8 @@ minus all of this process's private memory, and on Windows also the commit charg
 page file) minus a reserve. The packer's and the unpacker's budgets (prediction cache, files
 read ahead, coded data waiting for zstd, files decoded ahead) grow while there is room and shrink
 when another program takes it, so an archive is made with what the machine has, all of it, but no
-more. The reserve is 10% of the RAM, at least 2 GB and at most 6 GB (SEEDPACK_RESERVE_MB sets it).
+more. The reserve is 20% of the RAM, at least 6 GB and at most 12 GB (SEEDPACK_RESERVE_MB sets it):
+long runs at the edge of the memory are where an unstable machine fails.
 """
 import os
 
@@ -73,7 +74,7 @@ def reserve(total=None):
     if env:
         return int(env) << 20
     total = _status()[0] if total is None else total
-    return 2 << 30 if total is None else min(6 << 30, max(2 << 30, total // 10))
+    return 6 << 30 if total is None else min(12 << 30, max(6 << 30, total // 5))
 
 
 def room():

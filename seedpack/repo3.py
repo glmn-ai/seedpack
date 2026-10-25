@@ -699,13 +699,16 @@ class M28RepoGPU:
             return "rq"
         return None
 
+    CACHE_SPARE = 4 << 30                     # room the prediction cache leaves to the work's own buffers
+
     def _room(self, nbytes):
         """whether a prediction of nbytes may be cached: within cache_bytes (when set), and the
-        system keeps its reserve (memory.py; else predictions are made again when needed)"""
+        system keeps its reserve with CACHE_SPARE to spare (memory.py; else predictions are made
+        again when needed)"""
         if self.cache_bytes is not None and self.cached + nbytes > self.cache_bytes and not self.streaming:
             self.stats["cache_full"] = self.stats.get("cache_full", 0) + 1
             return False
-        ok = memory.fits(nbytes)
+        ok = memory.fits(nbytes + self.CACHE_SPARE)
         if not ok:
             self.stats["cache_low_memory"] = self.stats.get("cache_low_memory", 0) + 1
         return ok
