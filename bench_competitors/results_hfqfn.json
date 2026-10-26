@@ -1,0 +1,10 @@
+{
+ "_note": "neurosquad/Qwen3.8-Flash-Next-GSQ-RCO-SEEDPACK, RTX 5070 12 GB, i7-8700K, 32 GB RAM, Windows 10; repository (ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF at ed59f920) on two SATA SSDs in a stripe (B:), archive written to another SATA SSD (D:). Packed with SeedPack 0.4.0 (method M30) before its release commit; peak memory from runmon (process tree private memory, GPU memory above the desktop's baseline).",
+ "archive": 112749356117,
+ "pack_s": 1753,
+ "peak_vram_pack_gb": 2.7,
+ "peak_private_pack_gb": 5.5,
+ "test_all_s": 1564,
+ "peak_vram_test_gb": 2.8,
+ "peak_private_test_gb": 4.1
+}

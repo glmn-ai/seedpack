@@ -11,13 +11,15 @@
 Готовые архивы на Hugging Face:
 - [neurosquad/Qwen3-0.6B-SEEDPACK](https://huggingface.co/neurosquad/Qwen3-0.6B-SEEDPACK) — весь unsloth/Qwen3-0.6B-GGUF (BF16 и 25 квантов, 10.95 ГБ) в одном файле, с бенчмарком против 11 архиваторов;
 - [neurosquad/Qwen3.5-9B-SEEDPACK](https://huggingface.co/neurosquad/Qwen3.5-9B-SEEDPACK) — весь unsloth/Qwen3.5-9B-GGUF (BF16, 21 квант и проектор изображений, 147.8 ГБ) в 12.4 ГБ;
-- [neurosquad/Qwen3.8-27B-SEEDPACK](https://huggingface.co/neurosquad/Qwen3.8-27B-SEEDPACK) — весь unsloth/Qwen3.8-27B-GGUF (BF16 в двух частях, 24 кванта, MTP-слой и два проектора изображений, 472.1 ГБ) в 45.4 ГБ, хотя Dynamic-кванты Unsloth точно не воспроизводятся.
+- [neurosquad/Qwen3.8-27B-SEEDPACK](https://huggingface.co/neurosquad/Qwen3.8-27B-SEEDPACK) — весь unsloth/Qwen3.8-27B-GGUF (BF16 в двух частях, 24 кванта, MTP-слой и два проектора изображений, 472.1 ГБ) в 45.4 ГБ, хотя Dynamic-кванты Unsloth точно не воспроизводятся;
+- [neurosquad/Qwen3.8-Flash-Next-GSQ-RCO-SEEDPACK](https://huggingface.co/neurosquad/Qwen3.8-Flash-Next-GSQ-RCO-SEEDPACK) — весь ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF (четыре размера по два шарда и проектор изображений, 294.8 ГБ, BF16-модели нет) в 112.7 ГБ: размеры закодированы друг через друга (метод M30).
 
 ## Результаты
 
 | Что сжимается | Исходно | Архив | % | lmz 1.3.0 |
 |---|---|---|---|---|
 | unsloth/Qwen3.8-27B-GGUF целиком (BF16 + 24 кванта + MTP + 2 mmproj) | 472.07 ГБ | 45.41 ГБ | 9.62% | — |
+| ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF целиком (4 размера, без BF16; M30) | 294.82 ГБ | 112.75 ГБ | 38.24% | — |
 | unsloth/Qwen3.5-9B-GGUF целиком (BF16 + 21 квант + 3 mmproj) | 147.81 ГБ | 12.40 ГБ | 8.39% | — |
 | unsloth/Qwen3-0.6B-GGUF целиком (BF16 + 25 квантов) | 10.95 ГБ | 781.7 МБ | 7.14% | 41.5% |
 | unsloth/Qwen3.5-0.8B-GGUF целиком | 14.08 ГБ | 1.12 ГБ | 7.96% | 41.2% |
@@ -81,6 +83,8 @@ seedpack x qwen3.seedpack "*IQ1*" README.md -o out
 - одинаковые тензоры разных файлов хранятся один раз;
 - прочие файлы сжимаются LZMA или zstd.
 
+`--method m30` (с 0.4.0) — для нескольких размеров одной модели без BF16, кванты которых не выращиваются друг из друга: например, GSQ-RCO GGUF от ISTA-DASLab, где GSQ квантует каждый тензор заново для каждого размера. Одинаковые файлы и тензоры хранятся один раз; версии остальных тензоров упорядочены по размеру, старшая кодируется сама по себе, каждая следующая — при известном взвешенном по точности среднем предыдущих, проквантованном в её тип (QR, `seedpack/siblings.py`). Большие тензоры идут срезами по 64M весов, поэтому упаковка всего ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF (294.8 ГБ → 112.7 ГБ за 29 мин) заняла 2.7 ГБ памяти GPU и 5.5 ГБ RAM. Несколько файлов распаковываются разом, и каждая цепочка декодируется один раз: проверка всех 21 файла — 26 мин (188 МБ/с, 4.1 ГБ RAM).
+
 Каждый файл проверяется по BLAKE3 (если пакета нет — по SHA-256), каждая часть архива — по CRC32.
 
 ## Разработка
@@ -106,11 +110,12 @@ python -m seedpack --help         # то же, что команда seedpack
 - `seedpack/bf16v2.py` — кодек BF16 (R2); `seedpack/gpu_bf16.py` — M24.
 - `seedpack/gpu3.py` (на основе `seedpack/gpu2.py`) — M21/M22: кодек Q8_0 без базы (rANS с контекстами, предсказание строк по похожим строкам).
 - `seedpack/seed.py` — семя: старший квант набора без BF16 и его кодек.
+- `seedpack/siblings.py` — M30: размеры одной модели без базы, версии каждого тензора кодируются цепочкой.
 - `seedpack/qr.py` — QR: GPU-кодирование остатка вероятностями квантизатора (масштабы, затем коды; у сеточных IQ — ранг точки сетки по расстоянию до семени, затем знаки), и тот же кодер без семени для одиночных файлов.
 - `seedpack/requant.py` — CPU-квантизаторы через `ggmlq.dll`, загрузка imatrix (legacy `.dat` и GGUF).
 - `seedpack/imxfit.py` — восстановление imatrix, которым квантовали, когда в репозитории лежит другой (МНК по масштабам блоков legacy-квантов).
 - `bench*.py`, `results*.json` — замеры всех методов M1–M29; `research/` — исследования кодеков.
-- `bench_competitors/` — сравнение с другими архиваторами: `run_bench.py`, `quant_sets.py`, `vs_lmz.py`; `hf_bench.py` и `hf_card.py` — бенчмарк и карточка релиза Qwen3-0.6B на Hugging Face.
+- `bench_competitors/` — сравнение с другими архиваторами: `run_bench.py`, `quant_sets.py`, `vs_lmz.py`; `hf_bench.py` и `hf_card.py` — бенчмарк и карточка релиза Qwen3-0.6B на Hugging Face; `hf_card_9b.py`, `hf_card_27b.py`, `hf_card_qfn.py` — карточки остальных релизов, `hf_org.py` — карточка организации.
 - `assets/` — логотип (`logo.svg`), баннер (`banner.png`, исходник `banner.html`) и баннеры со статистикой релизов на Hugging Face (`stats-*.png`); их рендерит и сжимает `bench_competitors/hf_banners.py`.
 - `seedpack/ggml/` — исходники квантизации llama.cpp (MIT, см. `seedpack/ggml/LICENSE`).
 

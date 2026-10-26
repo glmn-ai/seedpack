@@ -11,13 +11,15 @@ The idea: quants are not stored but "grown" from BF16, like a plant from a seed.
 Ready archives on Hugging Face:
 - [neurosquad/Qwen3-0.6B-SEEDPACK](https://huggingface.co/neurosquad/Qwen3-0.6B-SEEDPACK) — all of unsloth/Qwen3-0.6B-GGUF (BF16 and 25 quants, 10.95 GB) in one file, with a benchmark against 11 archivers;
 - [neurosquad/Qwen3.5-9B-SEEDPACK](https://huggingface.co/neurosquad/Qwen3.5-9B-SEEDPACK) — all of unsloth/Qwen3.5-9B-GGUF (BF16, 21 quants and the vision projector, 147.8 GB) in 12.4 GB;
-- [neurosquad/Qwen3.8-27B-SEEDPACK](https://huggingface.co/neurosquad/Qwen3.8-27B-SEEDPACK) — all of unsloth/Qwen3.8-27B-GGUF (BF16 in 2 shards, 24 quants, the MTP layer and two vision projectors, 472.1 GB) in 45.4 GB, though Unsloth's Dynamic quants cannot be re-derived exactly.
+- [neurosquad/Qwen3.8-27B-SEEDPACK](https://huggingface.co/neurosquad/Qwen3.8-27B-SEEDPACK) — all of unsloth/Qwen3.8-27B-GGUF (BF16 in 2 shards, 24 quants, the MTP layer and two vision projectors, 472.1 GB) in 45.4 GB, though Unsloth's Dynamic quants cannot be re-derived exactly;
+- [neurosquad/Qwen3.8-Flash-Next-GSQ-RCO-SEEDPACK](https://huggingface.co/neurosquad/Qwen3.8-Flash-Next-GSQ-RCO-SEEDPACK) — all of ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF (four sizes in two shards each and the vision projector, 294.8 GB, no BF16 model) in 112.7 GB: the sizes coded against each other (method M30).
 
 ## Results
 
 | What is compressed | Original | Archive | % | lmz 1.3.0 |
 |---|---|---|---|---|
 | all of unsloth/Qwen3.8-27B-GGUF (BF16 + 24 quants + MTP + 2 mmproj) | 472.07 GB | 45.41 GB | 9.62% | — |
+| all of ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF (4 sizes, no BF16; M30) | 294.82 GB | 112.75 GB | 38.24% | — |
 | all of unsloth/Qwen3.5-9B-GGUF (BF16 + 21 quants + 3 mmproj) | 147.81 GB | 12.40 GB | 8.39% | — |
 | all of unsloth/Qwen3-0.6B-GGUF (BF16 + 25 quants) | 10.95 GB | 781.7 MB | 7.14% | 41.5% |
 | all of unsloth/Qwen3.5-0.8B-GGUF | 14.08 GB | 1.12 GB | 7.96% | 41.2% |
@@ -81,6 +83,8 @@ File roles are detected automatically:
 - identical tensors in different files are stored once;
 - all other files are compressed with LZMA or zstd.
 
+`--method m30` (since 0.4.0) is for several sizes of one model without a BF16 model, whose quants cannot be grown from one another: ISTA-DASLab's GSQ-RCO GGUFs, say, where GSQ quantizes every tensor anew for each size. Identical files and tensors are stored once; the versions of every other tensor are sorted by size, the largest is coded alone, and each next one given the precision-weighted mean of the earlier ones, quantized to its type (QR, `seedpack/siblings.py`). Big tensors go in slices of 64M weights, so packing all of ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF (294.8 GB → 112.7 GB in 29 min) needed 2.7 GB of GPU memory and 5.5 GB of RAM. Unpacking several files writes them all at once, so every chain is decoded once: testing all 21 files takes 26 min (188 MB/s, 4.1 GB of RAM).
+
 Every file is verified with BLAKE3 (SHA-256 if the package is missing), every archive chunk with CRC32.
 
 ## Development
@@ -106,11 +110,12 @@ Publishing: `python -m build`, then `twine upload dist/*`.
 - `seedpack/bf16v2.py` — the BF16 codec (R2); `seedpack/gpu_bf16.py` — M24.
 - `seedpack/gpu3.py` (based on `seedpack/gpu2.py`) — M21/M22: a Q8_0 codec without a base (context rANS, row prediction from similar rows).
 - `seedpack/seed.py` — the seed: the highest quant of a set without BF16, and its codec.
+- `seedpack/siblings.py` — M30: sizes of one model without a base, each tensor's versions coded in a chain.
 - `seedpack/qr.py` — QR: GPU coding of the residual with the quantizer's probabilities (scales, then codes; for the IQ grid types, the grid point's rank by distance to the seed, then the signs), and the same coder without a seed for single files.
 - `seedpack/requant.py` — CPU quantizers via `ggmlq.dll`, imatrix loading (legacy `.dat` and GGUF).
 - `seedpack/imxfit.py` — fitting back the imatrix a quant was made with when the repository publishes another one (least squares on the legacy quants' block scales).
 - `bench*.py`, `results*.json` — measurements of all methods M1–M29; `research/` — codec research.
-- `bench_competitors/` — comparison with other archivers: `run_bench.py`, `quant_sets.py`, `vs_lmz.py`; `hf_bench.py` and `hf_card.py` — the benchmark and the card of the Qwen3-0.6B release on Hugging Face.
+- `bench_competitors/` — comparison with other archivers: `run_bench.py`, `quant_sets.py`, `vs_lmz.py`; `hf_bench.py` and `hf_card.py` — the benchmark and the card of the Qwen3-0.6B release on Hugging Face; `hf_card_9b.py`, `hf_card_27b.py`, `hf_card_qfn.py` — the cards of the other releases, `hf_org.py` — the organization card.
 - `assets/` — the logo (`logo.svg`), the banner (`banner.png`, source `banner.html`) and the stats banners of the Hugging Face releases (`stats-*.png`); `bench_competitors/hf_banners.py` renders and compresses them.
 - `seedpack/ggml/` — llama.cpp quantization sources (MIT, see `seedpack/ggml/LICENSE`).
 

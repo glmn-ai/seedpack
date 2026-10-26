@@ -33,6 +33,8 @@ RELEASES = [  # archive: size of the published .seedpack file
     dict(model="Qwen3-0.6B", src="unsloth/Qwen3-0.6B-GGUF", files="hf06_files.json", archive=781678552),
     dict(model="Qwen3.5-9B", src="unsloth/Qwen3.5-9B-GGUF", files="hf9b_files.json", archive=12396550582),
     dict(model="Qwen3.8-27B", src="unsloth/Qwen3.8-27B-GGUF", files="hf27b_files.json", archive=45410617876),
+    dict(model="Qwen3.8-Flash-Next", name="Qwen3.8-Flash-Next-GSQ-RCO", title="Qwen3.8-Flash-Next GSQ-RCO", label="Flash-Next",
+         src="ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF", files="hfqfn_files.json", archive=112749356117),
 ]
 FONT = "https://github.com/google/fonts/raw/main/ofl/exo2/"        # Exo 2, variable: normal and italic
 FONT_FILES = {"normal": "Exo2%5Bwght%5D.ttf", "italic": "Exo2-Italic%5Bwght%5D.ttf"}
@@ -43,28 +45,58 @@ def size(b):
     return f"{b / 1e9:.2f}{NB}GB" if b >= 1e9 else f"{b / 1e6:.1f}{NB}MB"
 
 
-def stats_page(model, src, files, archive):
-    """the stats banner of one release as an HTML page"""
+def stats_page(model, src, files, archive, name=None):
+    """the stats banner of one release as an HTML page. A repository with a BF16 model shows it as the
+    seed; one without (sizes in folders, as ISTA-DASLab's) shows each folder as a tile and, in the first
+    tile, a file that every folder holds the same"""
+    name = name or model
     gguf = {n: v["size"] for n, v in files.items() if n.endswith(".gguf") and not n.startswith("imatrix")}
     shards = sorted(n for n in gguf if re.fullmatch(rf"(BF16/)?{re.escape(model)}-BF16(-\d{{5}}-of-\d{{5}})?\.gguf", n))
-    base = "BF16"                                  # the BF16 model, whole or split into shards
-    gguf = {base: sum(gguf.pop(n) for n in shards), **gguf}
     mmproj = sorted((n for n in gguf if n.startswith("mmproj")), key=lambda n: -gguf[n])
-    mtp = sorted(n for n in gguf if os.path.basename(n).startswith("mtp-"))
-    quants = sorted((n for n in gguf if n != base and n not in mmproj and n not in mtp), key=lambda n: -gguf[n])
-    tiles = quants + mtp + mmproj
+    parts = {}                                     # a third line in a tile: what it is made of
+    if shards:
+        base = "BF16"                             # the BF16 model, whole or split into shards
+        segs = [(base, sum(gguf[n] for n in shards), True)]
+        gguf = {base: sum(gguf.pop(n) for n in shards), **gguf}
+        first = f'<div class="n">BF16</div><div class="s">{size(gguf[base])}</div><div class="k">the seed</div>'
+        mtp = sorted(n for n in gguf if os.path.basename(n).startswith("mtp-"))
+        quants = sorted((n for n in gguf if n != base and n not in mmproj and n not in mtp), key=lambda n: -gguf[n])
+        tiles = quants + mtp + mmproj
+        segs += [(n, gguf[n], False) for n in tiles]
+        what = ["BF16" + (f" in {len(shards)} shards" if len(shards) > 1 else ""), f"{len(quants)} quants"] \
+            + (["the MTP layer"] if mtp else []) + ([f"{len(mmproj)} vision projectors"] if mmproj else [])
+    else:
+        dirs = {}
+        for n in gguf:
+            if "/" in n:
+                dirs.setdefault(n.split("/")[0], []).append(n)
+        by_sha = {}
+        for n in gguf:
+            by_sha.setdefault(files[n]["sha256"], []).append(n)
+        shared = max(by_sha.values(), key=len)     # the file each folder holds the same
+        first = (f'<div class="n">×{len(shared)}</div><div class="s">{size(gguf[shared[0]])}</div>'
+                 f'<div class="k">in every size</div>') if len(shared) > 1 else None
+        quants = sorted(dirs, key=lambda d: -sum(gguf[n] for n in dirs[d]))
+        parts = {d: " + ".join(f"<b>{gguf[n] / 1e9:.2f}</b>" if n in shared else f"{gguf[n] / 1e9:.2f}" for n in sorted(dirs[d]))
+                 + f"{NB}GB" for d in quants} | {n: "vision projector" for n in mmproj}
+        gguf |= {d: sum(gguf[n] for n in dirs[d]) for d in quants}
+        tiles = quants + mmproj
+        segs = [(n, gguf[n], n in shared) for d in quants for n in sorted(dirs[d])] + [(n, gguf[n], False) for n in mmproj]
+        per = {len(dirs[d]) for d in quants}
+        what = [f"{len(quants)} sizes" + (f" in {per.pop()} shards each" if len(per) == 1 else "")] \
+            + (["the vision projector"] if len(mmproj) == 1 else [f"{len(mmproj)} vision projectors"] if mmproj else [])
     cols = next((c for c in (6, 5, 7, 4) if len(tiles) % c == 0), 6)     # full rows when possible
     n_in = sum(v["size"] for v in files.values())
-    what = ["BF16" + (f" in {len(shards)} shards" if len(shards) > 1 else ""), f"{len(quants)} quants"]         + (["the MTP layer"] if mtp else []) + ([f"{len(mmproj)} vision projectors"] if mmproj else [])
     what = ", ".join(what[:-1]) + " and " + what[-1]
 
     def short(n):
         return os.path.basename(n).replace(f"{model}-", "").removesuffix(".gguf")
 
-    tile_html = "\n".join(f'    <div class="t"><div class="n">{short(n)}</div><div class="s">{size(gguf[n])}</div></div>'
-                          for n in tiles)
+    tile_html = "\n".join(f'    <div class="t"><div class="n">{short(n)}</div><div class="s">{size(gguf[n])}</div>'
+                          + (f'<div class="d">{parts[n]}</div>' if n in parts else "") + "</div>" for n in tiles)
+    first_html = f'    <div class="t base">{first}</div>' if first else ""
     seed = ' class="seed"'
-    segments = "".join(f'<i{seed if n == base else ""} style="flex-grow:{gguf[n]}"></i>' for n in [base] + tiles)
+    segments = "".join(f'<i{seed if s else ""} style="flex-grow:{b}"></i>' for _, b, s in segs)
     pct = 100 * archive / n_in
     return f"""<!doctype html>
 <html><head><meta charset="utf-8">
@@ -80,7 +112,7 @@ def stats_page(model, src, files, archive):
   .head {{ display: flex; justify-content: space-between; align-items: flex-end; }}
   h1 {{ margin: 0; font-size: 66px; line-height: 1; font-weight: 800; font-style: italic; letter-spacing: -1px; }}
   .src {{ margin: 14px 0 0; font-size: 25px; font-weight: 500; color: #A9B5AE; }}
-  .ratio {{ text-align: right; }}
+  .ratio {{ flex: none; margin-left: 32px; text-align: right; }}
   .ratio b {{ display: block; font-size: 100px; line-height: .86; font-weight: 800; font-style: italic; padding-right: 8px;
               background: linear-gradient(90deg, #9BE34A, #29C074); -webkit-background-clip: text; color: transparent; }}
   .ratio span {{ display: block; margin-top: 10px; font-size: 25px; font-weight: 500; color: #A9B5AE; }}
@@ -88,6 +120,8 @@ def stats_page(model, src, files, archive):
   .t {{ background: #141B17; border: 2px solid #212B25; border-radius: 12px; padding: 8px 12px 9px; }}
   .n {{ font-size: 20.5px; font-weight: 600; color: #E8EEEA; white-space: nowrap; }}
   .s {{ margin-top: 1px; font-size: 19px; font-weight: 500; color: #8C9891; white-space: nowrap; }}
+  .d {{ margin-top: 6px; font-size: 17px; font-weight: 500; color: #6F7B74; white-space: nowrap; }}
+  .d b {{ font-weight: 600; color: #8FD35A; }}
   .base {{ flex: 0 0 150px; box-sizing: border-box; display: flex; flex-direction: column; border-color: #3C5A32;
            background: linear-gradient(180deg, #18241A, #121A15); }}
   .base .n {{ font-size: 32px; font-weight: 800; font-style: italic; }}
@@ -122,7 +156,7 @@ def stats_page(model, src, files, archive):
     <div class="ratio"><b>{n_in / archive:.1f}×</b><span>smaller, byte for byte</span></div>
   </div>
   <div class="files">
-    <div class="t base"><div class="n">BF16</div><div class="s">{size(gguf[base])}</div><div class="k">the seed</div></div>
+{first_html}
     <div class="grid">
 {tile_html}
     </div>
@@ -130,7 +164,7 @@ def stats_page(model, src, files, archive):
   <div class="bars">
     <div class="row"><span>Original repository, {len(files)} files</span><b>{size(n_in)}</b></div>
     <div class="bar">{segments}</div>
-    <div class="row arc"><span>SeedPack archive, one file: {html.escape(model)}.seedpack</span></div>
+    <div class="row arc"><span>SeedPack archive, one file: {html.escape(name)}.seedpack</span></div>
     <div class="arcbar"><i></i><b>{size(archive)}</b><span>{pct:.2f}% of the original</span>
       <div class="brand"><img src="{uri(os.path.join(ASSETS, "logo.svg"))}" alt=""><span>Seed<em>Pack</em></span></div></div>
   </div>
@@ -196,10 +230,11 @@ if __name__ == "__main__":
     with tempfile.TemporaryDirectory() as tmp:
         jobs = [(os.path.join(ASSETS, "banner.html"), os.path.join(ASSETS, "banner.png"))]
         for rel in RELEASES:
-            page = os.path.join(tmp, f"stats-{rel['model'].lower()}.html")
+            stem = f"stats-{rel.get('name', rel['model']).lower()}"
+            page = os.path.join(tmp, f"{stem}.html")
             files = json.load(open(os.path.join(HERE, rel["files"])))
-            open(page, "w", encoding="utf-8").write(stats_page(rel["model"], rel["src"], files, rel["archive"]))
-            jobs.append((page, os.path.join(ASSETS, f"stats-{rel['model'].lower()}.png")))
+            open(page, "w", encoding="utf-8").write(stats_page(rel["model"], rel["src"], files, rel["archive"], rel.get("name")))
+            jobs.append((page, os.path.join(ASSETS, f"{stem}.png")))
         for page, png in jobs:
             render(page, png)
             w, h = Image.open(png).size

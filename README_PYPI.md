@@ -18,6 +18,8 @@ The archive is smaller than the repository's largest single quant (UD-Q8_K_XL, 8
 
 Models bigger than the GPU's memory are streamed: all of unsloth/Qwen3.5-9B-GGUF (BF16, 21 quants and the vision projector, 147.8 GB) packs into [12.4 GB](https://huggingface.co/neurosquad/Qwen3.5-9B-SEEDPACK) in under 4 minutes on a 12 GB card, and its Q4_K_M comes back in about 20 s. All of unsloth/Qwen3.8-27B-GGUF (BF16 in two shards, 24 quants, the MTP layer and two vision projectors, 472.1 GB) packs into [45.4 GB](https://huggingface.co/neurosquad/Qwen3.8-27B-SEEDPACK) in 23 minutes on the same card with 32 GB of RAM. Unsloth's Dynamic quants cannot be re-derived exactly; their residuals are coded with position-aware contexts, the tensors they share are stored once, and the imatrix that the plain Q4_0 / Q4_1 were made with, which is not in the repository, is fitted back from the quants.
 
+Without a BF16 model, `--method m30` (0.4.0) codes the sizes of one model against each other: identical files and tensors once, every other tensor as a chain of versions, each coded given the precision-weighted mean of the earlier ones. All of ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF (four sizes, IQ3_S to Q2_0, in two shards each and the vision projector, 294.8 GB) packs into [112.7 GB](https://huggingface.co/neurosquad/Qwen3.8-Flash-Next-GSQ-RCO-SEEDPACK) in 29 minutes, with 2.7 GB of GPU memory.
+
 ## Install
 
 ```bash

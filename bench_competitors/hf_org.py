@@ -37,10 +37,14 @@ out_dir = sys.argv[1]
 rels = []
 for rel in RELEASES:
     files = json.load(open(os.path.join(HERE, rel["files"])))
-    rels.append(dict(rel, n_in=sum(v["size"] for v in files.values()), n_files=len(files),
-                     n_quants=sum(1 for n in files if n.endswith(".gguf") and "-BF16" not in n and "mmproj" not in n
-                                  and not os.path.basename(n).startswith(("mtp-", "imatrix")))))
+    sizes = sorted({n.split("/")[0] for n in files if n.endswith(".gguf") and "/" in n and not n.startswith("BF16/")})
+    bf16 = any("-BF16" in n and not n.startswith("mmproj") for n in files)
+    rels.append(dict(rel, n_in=sum(v["size"] for v in files.values()), n_files=len(files), bf16=bf16,
+                     n_quants=len(sizes) if not bf16 else
+                     sum(1 for n in files if n.endswith(".gguf") and "-BF16" not in n and "mmproj" not in n
+                         and not os.path.basename(n).startswith(("mtp-", "imatrix")))))
 big = next(r for r in rels if r["model"] == "Qwen3.8-27B")
+qfn = next((r for r in rels if r.get("name") == "Qwen3.8-Flash-Next-GSQ-RCO"), None)
 b27 = json.load(open(os.path.join(HERE, "hf27b_files.json")))
 bf16_27 = sum(v["size"] for n, v in b27.items() if n.startswith("BF16/"))
 res06 = json.load(open(os.path.join(HERE, "results_hf06.json")))
@@ -120,8 +124,9 @@ def bench():
         pct = 100 * r["archive"] / r["n_in"]
         rows.append(f"""
     <div class="rel">
-      <div class="rn"><b>{html.escape(r["model"])}</b><span>BF16 + {r["n_quants"]} quants</span></div>
-      <div class="track"><i style="width:{pct:.3f}%"></i><em>{gb(r["n_in"])} → <b>{gb(r["archive"])}</b></em></div>
+      <div class="rn"><b>{html.escape(r.get("label", r["model"]))}</b><span>{f"BF16 + {r['n_quants']} quants" if r["bf16"]
+                                                                          else f"{r['n_quants']} GSQ-RCO sizes, no BF16"}</span></div>
+      <div class="track"><i style="width:{pct:.3f}%"></i><em{f' style="left:{pct + 2:.1f}%; font-size: 20px"' if pct > 10 else ""}>{gb(r["n_in"])} → <b>{gb(r["archive"])}</b></em></div>
       <div class="rx g">{r["n_in"] / r["archive"]:.1f}×</div>
     </div>""")
     bars = []
@@ -157,7 +162,7 @@ def bench():
   .track i {{ position: absolute; left: 0; top: 0; bottom: 0; border-radius: 8px; background: linear-gradient(90deg, #9BE34A, #29C074);
               box-shadow: 0 0 18px rgba(110, 214, 80, .35); }}
   .track em {{ position: absolute; left: 13%; top: 0; bottom: 0; display: flex; align-items: center; font-style: normal;
-               font-size: 22px; font-weight: 500; color: #A9B5AE; }}
+               font-size: 22px; font-weight: 500; color: #A9B5AE; white-space: nowrap; }}
   .track em b {{ margin-left: 8px; color: #fff; font-weight: 600; }}
   .rx {{ flex: 0 0 104px; text-align: right; font-size: 40px; font-weight: 800; font-style: italic; }}
   .ar {{ display: flex; align-items: center; gap: 18px; margin-top: 9px; }}
@@ -177,7 +182,7 @@ def bench():
 <body>
 <div class="b">
   <h1>Seed<span class="g">Pack</span> benchmarks</h1>
-  <h2>Whole Unsloth repositories <small>· full bar = the original</small></h2>
+  <h2>Whole repositories <small>· full bar = the original</small></h2>
   {"".join(rows)}
   <h2>Other archivers on unsloth/Qwen3-0.6B-GGUF <small>· lower is better</small></h2>
   <div class="ars">{"".join(bars)}
@@ -201,9 +206,14 @@ with tempfile.TemporaryDirectory() as tmp:
 
 ud = [n for n in b27 if "-UD-" in n]
 img = f"https://huggingface.co/spaces/{SPACE}/resolve/main/assets"
-link = {r["model"]: f"https://huggingface.co/{ORG}/{r['model']}-SEEDPACK" for r in rels}
-table = "\n".join(f"| [{r['model']}]({link[r['model']]}) | {gb(r['n_in'])} → **{gb(r['archive'])}** | "
+link = {r["model"]: f"https://huggingface.co/{ORG}/{r.get('name', r['model'])}-SEEDPACK" for r in rels}
+table = "\n".join(f"| [{r.get('title', r['model'])}]({link[r['model']]}) | {gb(r['n_in'])} → **{gb(r['archive'])}** | "
                    f"{r['n_in'] / r['archive']:.1f}× |" for r in reversed(rels))
+qfn_section = f"""### Qwen3.8-Flash-Next GSQ-RCO: {gb(qfn['n_in'])} → {gb(qfn['archive'])}
+
+[{qfn['src']}](https://huggingface.co/{qfn['src']}), the GGUFs most Qwen3.8-Flash-Next users run (Strata's default), has no BF16 model to grow its sizes from. SeedPack 0.4.0 codes its {qfn['n_quants']} sizes against each other instead: identical files and tensors once, and every other tensor as a chain of versions, each coded given the precision-weighted mean of the earlier ones. All four sizes fit in one archive of **{gb(qfn['archive'])}**, {qfn['n_in'] / qfn['archive']:.1f}× smaller than the repository. [The archive]({link[qfn['model']]}) is for keeping all four sizes: one size alone is still smaller.
+
+""" if qfn else ""
 card = f"""---
 title: NeuroSquad
 emoji: 🌱
@@ -235,9 +245,9 @@ All of [{big['src']}](https://huggingface.co/{big['src']}) — the BF16 model in
   <img src="{img}/seedpack-benchmarks.png" alt="SeedPack benchmarks: the releases and other archivers" width="860">
 </p>
 
-### Releases
+{qfn_section}### Releases
 
-Each archive holds a whole Unsloth repository (`unsloth/<model>-GGUF`): the BF16 model, every quant and the rest of its files.
+Each archive holds a whole repository: every file of it, restored byte for byte.
 
 | Model | Repository → archive | Smaller |
 |---|---:|---:|
