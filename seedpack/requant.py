@@ -24,7 +24,7 @@ QFUN = {2: ("quantize_q4_0", 32, 18), 3: ("quantize_q4_1", 32, 20), 6: ("quantiz
         14: ("quantize_q6_K", 256, 210), 16: ("quantize_iq2_xxs", 256, 66), 17: ("quantize_iq2_xs", 256, 74),
         18: ("quantize_iq3_xxs", 256, 98), 19: ("quantize_iq1_s", 256, 50), 20: ("quantize_iq4_nl", 32, 18),
         21: ("quantize_iq3_s", 256, 110), 22: ("quantize_iq2_s", 256, 82), 23: ("quantize_iq4_xs", 256, 136),
-        29: ("quantize_iq1_m", 256, 56)}
+        29: ("quantize_iq1_m", 256, 56), 42: ("quantize_q2_0", 64, 18)}
 IQ2_INIT = {16, 17, 19, 22, 29}            # iq2xs_init_impl(type)
 IQ3_INIT = {18: 256, 21: 512}              # iq3xs_init_impl(grid size)
 

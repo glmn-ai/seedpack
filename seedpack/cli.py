@@ -196,6 +196,7 @@ def cmd_pack(a):
     cp = gpu_check()
     from .container import Writer
     from .repo3 import M28RepoGPU, M29RepoGPU
+    from .siblings import M30Siblings
     files = collect(a.inputs)
     if not files:
         fail("nothing to archive")
@@ -211,13 +212,13 @@ def cmd_pack(a):
           f"{len(extras)} other file(s)")
     print(f"  memory: {human(max(0, memory.room()))} free to use, {human(memory.reserve())} kept for the system")
     want_im = sorted({os.path.basename(_IMATRIX_OF[p].replace("\\", "/")) for p in derived.values() if p in _IMATRIX_OF})
-    if want_im and not any("imatrix" in n.lower() for n in extras):
+    if want_im and not any("imatrix" in n.lower() for n in extras) and a.method != "m30":
         print(f"  note: the quants were made with an importance matrix ({', '.join(want_im[:3])}); adding that file "
               "to the inputs makes the archive about 15-20% smaller")
-    if derived and not bases:
+    if derived and not bases and a.method != "m30":
         print("  note: no BF16 GGUF among the inputs - the most precise quant is the seed the others are derived "
               "from (with the BF16 model the archive is smaller still)")
-    m = (M28RepoGPU if a.method == "m28" else M29RepoGPU)(level=a.level, cache_bytes=cache_bytes(a.cache))
+    m = {"m28": M28RepoGPU, "m29": M29RepoGPU, "m30": M30Siblings}[a.method](level=a.level, cache_bytes=cache_bytes(a.cache))
     m.verbose = not a.quiet
     algo = default_algo()
     digest = _hasher(algo)
@@ -263,7 +264,8 @@ def cmd_pack(a):
     dt = time.perf_counter() - t0
     size = os.path.getsize(out)
     print(f"{out}: {human(total)} -> {human(size)} ({100 * size / total:.2f}%"
-          + (f", {100 * size / sum(os.path.getsize(p) for p in bases.values()):.1f}% of the BF16 base(s)" if bases else "")
+          + (f", {100 * size / sum(os.path.getsize(p) for p in bases.values()):.1f}% of the BF16 base(s)"
+             if bases and a.method != "m30" else "")
           + f") in {dt:.1f} s ({total / dt / 1e6:.0f} MB/s)")
 
 
@@ -389,6 +391,7 @@ def _extract(a, outdir):
     gpu_check()
     from .container import FormatError
     from .repo3 import M28RepoGPU, M29RepoGPU
+    from .siblings import M30Siblings
     r = open_archive(a.archive)
     meta = r.meta
     sel, names = select(meta, a.files)
@@ -396,7 +399,7 @@ def _extract(a, outdir):
         clash = [n for n in names if os.path.exists(os.path.join(outdir, *n.split("/")))]
         if clash:
             fail(f"{len(clash)} file(s) already exist in {outdir}, e.g. {clash[0]} (use --force to overwrite)")
-    cls = M28RepoGPU if meta["method"].startswith("M28") else M29RepoGPU
+    cls = M28RepoGPU if meta["method"].startswith("M28") else M30Siblings if meta["method"].startswith("M30") else M29RepoGPU
     m = cls(cache_bytes=cache_bytes(a.cache))
     # a base too big for the GPU is decoded into a temporary file: next to the output (or the
     # archive), where there is room for the model anyway, not in the system's temp directory
@@ -447,7 +450,9 @@ def main(argv=None):
     s = sub.add_parser("pack", aliases=["a"], help="archive files and/or directories")
     s.add_argument("inputs", nargs="+", help="files or directories (directory contents keep their relative paths)")
     s.add_argument("-o", "--output", required=True, help="archive to create (.seedpack)")
-    s.add_argument("--method", choices=["m29", "m28"], default="m29", help="m29 (default): BF16 v2 base codec; m28: M24 codec")
+    s.add_argument("--method", choices=["m29", "m28", "m30"], default="m29",
+                   help="m29 (default): BF16 v2 base codec; m28: M24 codec; m30: several sizes of one model without "
+                        "its BF16 weights (each tensor's versions coded in a chain)")
     s.add_argument("--level", type=int, default=7, help="zstd level of the residuals (default 7; 9: about 1.5%% smaller, slower)")
     s.add_argument("--cache", type=int, default=None, help="prediction cache cap in MB (default: none, whatever the memory allows)")
     s.add_argument("-f", "--force", action="store_true", help="overwrite the archive")

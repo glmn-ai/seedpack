@@ -34,15 +34,15 @@ import numpy as np
 from .codecs_gguf import pack, unpack, zstd_c, zstd_d
 from .gpu2 import cum_of, store_tables, load_tables, h2d
 
-SELF_TYPES = {2, 3, 6, 7, 8, 10, 11, 12, 13, 14, 20, 23}     # also coded without a seed, and seeds
+SELF_TYPES = {2, 3, 6, 7, 8, 10, 11, 12, 13, 14, 20, 23, 42}     # also coded without a seed, and seeds
 GRID_TYPES = {16, 17, 18, 19, 21, 22, 29}
 QR_TYPES = SELF_TYPES | GRID_TYPES
 SEED_TYPES = SELF_TYPES | {0, 1, 30}
 EXPLICIT = 99                            # seed given as float32 (x, h) pairs per weight
-BS = {2: 18, 3: 20, 6: 22, 7: 24, 8: 34, 10: 84, 11: 110, 12: 144, 13: 176, 14: 210, 20: 18, 23: 136,
+BS = {2: 18, 3: 20, 6: 22, 7: 24, 8: 34, 10: 84, 11: 110, 12: 144, 13: 176, 14: 210, 20: 18, 23: 136, 42: 18,
       16: 66, 17: 74, 18: 98, 19: 50, 21: 110, 22: 82, 29: 56}
-QK = {t: (32 if t in (2, 3, 6, 7, 8, 20) else 256) for t in QR_TYPES}
-NFIELDS = {2: 1, 6: 1, 8: 1, 20: 1, 3: 2, 7: 2, 10: 34, 11: 17, 14: 17, 12: 18, 13: 18, 23: 9,
+QK = {t: (32 if t in (2, 3, 6, 7, 8, 20) else 64 if t == 42 else 256) for t in QR_TYPES}
+NFIELDS = {2: 1, 6: 1, 8: 1, 20: 1, 42: 1, 3: 2, 7: 2, 10: 34, 11: 17, 14: 17, 12: 18, 13: 18, 23: 9,
            16: 9, 18: 9, 19: 9, 21: 9, 17: 17, 22: 17, 29: 17}
 # grid of each grid type in the CPU library's tables (gpuquant): iq2_data / iq3_data index
 GRID_TAB = {16: "iq2_data_0", 17: "iq2_data_1", 19: "iq2_data_2", 29: "iq2_data_2", 22: "iq2_data_3",
@@ -85,18 +85,18 @@ __device__ __forceinline__ float h2fv(unsigned int h) {
 }
 __device__ __forceinline__ float h2f(const uchar* p) { return h2fv(p[0] | (p[1] << 8)); }
 
-__device__ __forceinline__ int QKof(int T) { return (T == 2 || T == 3 || T == 6 || T == 7 || T == 8 || T == 20) ? 32 : 256; }
+__device__ __forceinline__ int QKof(int T) { return (T == 2 || T == 3 || T == 6 || T == 7 || T == 8 || T == 20) ? 32 : T == 42 ? 64 : 256; }
 __device__ __forceinline__ int BSof(int T) {
     switch (T) { case 2: return 18; case 3: return 20; case 6: return 22; case 7: return 24; case 8: return 34;
                  case 10: return 84; case 11: return 110; case 12: return 144; case 13: return 176; case 14: return 210;
-                 case 20: return 18; case 23: return 136;
+                 case 20: return 18; case 23: return 136; case 42: return 18;
                  case 16: return 66; case 17: return 74; case 18: return 98; case 19: return 50; case 21: return 110;
                  case 22: return 82; case 29: return 56; }
     return 1;
 }
 __device__ __forceinline__ bool GRIDT(int T) { return T == 16 || T == 17 || T == 18 || T == 19 || T == 21 || T == 22 || T == 29; }
 __device__ __forceinline__ int NSB(int T) {
-    switch (T) { case 2: case 6: case 8: case 20: return 2; case 3: case 7: return 4; case 10: return 20;
+    switch (T) { case 2: case 6: case 8: case 20: case 42: return 2; case 3: case 7: return 4; case 10: return 20;
                  case 11: return 14; case 12: case 13: return 16; case 14: return 18; case 23: return 8; }
     return 0;
 }
@@ -106,7 +106,7 @@ __device__ __forceinline__ int SBO(int T, int k) {       // byte offset of the k
 }
 __device__ __forceinline__ int QMIN(int T) { return T == 8 ? -128 : 0; }
 __device__ __forceinline__ int QMAX(int T) {
-    switch (T) { case 10: return 3; case 11: return 7; case 6: case 7: case 13: return 31; case 14: return 63; case 8: return 127; }
+    switch (T) { case 10: case 42: return 3; case 11: return 7; case 6: case 7: case 13: return 31; case 14: return 63; case 8: return 127; }
     return 15;
 }
 __device__ __forceinline__ bool NONLIN(int T) { return T == 20 || T == 23; }
@@ -148,6 +148,7 @@ __device__ int get_code(int T, const uchar* b, int w) {
     case 14: { int n = w >> 7, r = w & 127, g = r >> 5, l = r & 31; int v = b[64 * n + l + ((g & 1) ? 32 : 0)];
                return ((g < 2) ? (v & 15) : (v >> 4)) | (((b[128 + 32 * n + l] >> (2 * g)) & 3) << 4); }
     case 23: { int ib = w >> 5, l = w & 31; int v = b[8 + 16 * ib + (l & 15)]; return l < 16 ? (v & 15) : (v >> 4); }
+    case 42: return (b[2 + (w >> 2)] >> (2 * (w & 3))) & 3;
     }
     return 0;
 }
@@ -170,13 +171,14 @@ __device__ void put_code(int T, uchar* b, int w, int q) {
                b[64 * n + l + ((g & 1) ? 32 : 0)] |= (g < 2) ? (q & 15) : ((q & 15) << 4);
                b[128 + 32 * n + l] |= ((q >> 4) & 3) << (2 * g); return; }
     case 23: { int ib = w >> 5, l = w & 31; b[8 + 16 * ib + (l & 15)] |= l < 16 ? q : q << 4; return; }
+    case 42: b[2 + (w >> 2)] |= (q & 3) << (2 * (w & 3)); return;
     }
 }
 
 // ---- scale fields: fp16 d / dmin / m and the 4-, 6-, 8-bit sub-scales, as integers
 #define MAXF 34
 __device__ __forceinline__ int NFIELD(int T) {
-    switch (T) { case 2: case 6: case 8: case 20: return 1; case 3: case 7: return 2; case 10: return 34;
+    switch (T) { case 2: case 6: case 8: case 20: case 42: return 1; case 3: case 7: return 2; case 10: return 34;
                  case 11: case 14: return 17; case 12: case 13: return 18; case 23: return 9;
                  case 16: case 18: case 19: case 21: return 9; case 17: case 22: case 29: return 17; }
     return 0;
@@ -199,7 +201,7 @@ __device__ __forceinline__ int iq1m_d(const uchar* b) {
 }
 __device__ int get_field(int T, const uchar* b, int k) {
     switch (T) {
-    case 2: case 6: case 8: case 20: return u16(b);
+    case 2: case 6: case 8: case 20: case 42: return u16(b);
     case 3: case 7: return u16(b + 2 * k);
     case 10: if (k == 0) return u16(b + 80); if (k == 1) return u16(b + 82); return k < 18 ? (b[k - 2] & 15) : (b[k - 18] >> 4);
     case 11: if (k == 0) return u16(b + 108); return q3k_scale(b + 96, k - 1);
@@ -222,7 +224,7 @@ __device__ __forceinline__ void put16(uchar* b, int v) { b[0] = (uchar)(v & 255)
 // writes all scale fields (the scale bytes must be zero before)
 __device__ void set_fields(int T, uchar* b, const int* v) {
     switch (T) {
-    case 2: case 6: case 8: case 20: put16(b, v[0]); return;
+    case 2: case 6: case 8: case 20: case 42: put16(b, v[0]); return;
     case 3: case 7: put16(b, v[0]); put16(b + 2, v[1]); return;
     case 10: put16(b + 80, v[0]); put16(b + 82, v[1]);
              for (int j = 0; j < 16; j++) b[j] = (uchar)((v[2 + j] & 15) | ((v[18 + j] & 15) << 4)); return;
@@ -296,6 +298,7 @@ __device__ void wscale(int T, const uchar* b, int w, float& a, float& c) {
     case 3: case 7: a = h2f(b); c = h2f(b + 2); return;
     case 6: a = h2f(b); c = __fmul_rn(-16.f, a); return;
     case 8: case 20: a = h2f(b); return;
+    case 42: a = h2f(b); c = -a; return;                  // Q2_0: codes 0..3 are -1..2 x d
     case 10: { int n = w >> 7, r = w & 127, j = r >> 5; int sc = b[8 * n + 2 * j + ((r & 31) >= 16)];
                a = __fmul_rn(h2f(b + 80), (float)(sc & 15)); c = -__fmul_rn(h2f(b + 82), (float)(sc >> 4)); return; }
     case 11: { int n = w >> 7, r = w & 127, j = r >> 5; int s = q3k_scale(b + 96, 8 * n + 2 * j + ((r & 31) >= 16));
@@ -802,6 +805,15 @@ extern "C" __global__ void qr_dec(int T, const uchar* in, const unsigned long lo
     }
 }
 
+// per weight of grid-type blocks: half the step between the grid's levels around it (a seed's
+// uncertainty: value = s (2 l + 1), IQ1: s (l - 1 + dl))
+extern "C" __global__ void grid_h(int T, const uchar* F, long long nw, float* h) {
+    long long i = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= nw) return;
+    float s, dl; gscale(T, F + (i / 256) * BSof(T), (int)(i % 256) / 8, s, dl);
+    h[i] = (T == 19 || T == 29) ? 0.5f * fabsf(s) : fabsf(s);
+}
+
 // per weight of quantised blocks: the interval of original values that rounds to its code
 extern "C" __global__ void intervals(int T, const uchar* F, long long nw, float* lo, float* hi) {
     long long i = (long long)blockIdx.x * blockDim.x + threadIdx.x;
@@ -1082,6 +1094,15 @@ def intervals(T, blocks, nw):
     lo = cp.empty(nw, cp.float32); hi = cp.empty(nw, cp.float32)
     kern("intervals")(((nw + 255) // 256,), (256,), (np.int32(T), blocks, np.int64(nw), lo, hi))
     return lo, hi
+
+
+def explicit_seed(T, blocks, x):
+    """an EXPLICIT seed (99) from a grid-type tensor: device float32 (x, h) per weight, x its values
+    (dequantised) and h half the step between its grid's levels"""
+    nw = x.size
+    h = cp.empty(nw, cp.float32)
+    kern("grid_h")(((nw + 255) // 256,), (256,), (np.int32(T), blocks, np.int64(nw), h))
+    return cp.stack([x.reshape(-1), h], axis=1).reshape(-1)
 
 
 def weight_equal(T, F, P, nw):
