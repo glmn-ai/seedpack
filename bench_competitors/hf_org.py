@@ -284,7 +284,7 @@ seedpack list hf://{ORG}/{big['model']}-SEEDPACK                                
 seedpack x hf://{ORG}/{big['model']}-SEEDPACK {big['model']}-UD-Q4_K_XL.gguf -o models   # one quant
 ```
 
-SeedPack needs an NVIDIA GPU (Turing or newer) with a CUDA 13 driver and Python 3.11+; the model does not have to fit in GPU memory. Source code, documentation and the roadmap: [GitHub]({GITHUB}) · [PyPI]({PYPI}).
+SeedPack runs on an NVIDIA GPU (Turing or newer) with a CUDA 13 driver; without one, `--cpu` (0.5.0, `pip install "seedpack[cpu]"`) makes the same archives byte for byte, 10–20 times slower. Python 3.11+; the model does not have to fit in GPU memory. Source code, documentation and the roadmap: [GitHub]({GITHUB}) · [PyPI]({PYPI}).
 """
 open(os.path.join(out_dir, "README.md"), "w", encoding="utf-8", newline="\n").write(card)
 print(f"{out_dir}/README.md: {big['model']} {gb(big['n_in'])} -> {gb(big['archive'])}")
