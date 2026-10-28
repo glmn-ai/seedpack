@@ -143,7 +143,8 @@ def gpu_check():
         except RuntimeError as e:
             fail(str(e))
         from .xp import cp
-        print(f"  running on the CPU: {cpukernels.threads()} threads, kernels built with {os.path.basename(cc[-1])}")
+        name = "ziglang" if "ziglang" in cc else os.path.basename(cc[0])
+        print(f"  running on the CPU: {cpukernels.threads()} threads, kernels built with {name}")
         return cp
     try:
         import cupy as cp
