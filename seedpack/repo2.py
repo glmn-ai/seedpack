@@ -15,7 +15,7 @@ import hashlib
 import json
 import lzma
 
-import cupy as cp
+from .xp import cp
 import numpy as np
 import zstandard
 

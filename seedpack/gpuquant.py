@@ -7,16 +7,17 @@ type are quantised in a single launch. Exactness comes from compiling without FM
 contraction (--fmad=false) and with IEEE division / square root, which reproduces the
 scalar SSE arithmetic of the CPU build; the IQ grids, maps and neighbour lists are copied
 from the CPU library after its own init functions built them.
+With --cpu the same source is compiled for the host (cpukernels.py) and gives the same bytes.
 """
 import ctypes
 import hashlib
 import os
 import re
 
-import cupy as cp
-import cupyx
 import numpy as np
 
+from . import xp
+from .xp import cp, cupyx
 from .ptxfix import link_cubin, opaque_divisions, ptx_of
 from .requant import QFUN, IQ2_INIT, IQ3_INIT, lib
 
@@ -227,11 +228,21 @@ __device__ static size_t ggml_row_size(enum ggml_type t, int64_t ne) {
     }
 }
 """
-    src = (_PRELUDE + _fp16_funcs() + _common_header() + rowsize + _cxx_fixes(_quants_body())
+    src = (_prelude() + _fp16_funcs() + _common_header() + rowsize + _cxx_fixes(_quants_body())
            + _cxx_fixes(_variant_bodies()) + _kernels())
-    with open(os.path.join(cache_dir(), "gpuquant.cu"), "w", encoding="utf-8") as f:
+    with open(os.path.join(cache_dir(), "gpuquant-cpu.cu" if xp.CPU else "gpuquant.cu"), "w", encoding="utf-8") as f:
         f.write(src)
     return src
+
+
+def _prelude():
+    """on the CPU the standard headers come first (cpukernels.PRELUDE): without the fixed-width
+    typedefs (int64_t is long on Linux) and with the library's qsort renamed (the C library has one)"""
+    if not xp.CPU:
+        return _PRELUDE
+    lines = [ln for ln in _PRELUDE.split("\n") if not ln.startswith(("typedef signed char", "typedef int int32_t",
+                                                                      "typedef decltype"))]
+    return "#define qsort ggml_qsort_\n" + "\n".join(lines)
 
 
 _bf16_to_f32 = cp.ElementwiseKernel("uint16 a", "float32 y", "y = __uint_as_float(((unsigned int)a) << 16)",
@@ -276,6 +287,10 @@ class GPUQuant:
         """fmad=True lets the compiler fuse a*b+c into FMA, as a CPU build with -march=native
         and floating-point contraction does (some published quantisations were made that way)"""
         src = build_source()
+        if xp.CPU:
+            self.mod = cp.RawModule(code=src, exact_division=True)      # ptxfix makes the GPU's exact too
+            self._upload_tables()
+            return
         # the quantisers keep block-local arrays on the stack (up to ~0.8 KB per thread in the
         # optimised build; the default limit is 1 KB). The limit is reserved for every resident
         # thread, so it is kept small.
@@ -340,7 +355,7 @@ class GPUQuant:
     def _dev(self, a):
         d = cp.asarray(a)
         self._keep.append(d)
-        return d.data.ptr
+        return xp.ptr(d)
 
     def quantize_tensors(self, ttype, srcs, imatrices, variant=0, max_weights=1 << 28, on_result=None, device=False):
         """srcs: list of (device array of the weights as bf16 (uint16) / f16 / f32, n_per_row).

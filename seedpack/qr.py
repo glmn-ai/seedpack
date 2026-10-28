@@ -28,9 +28,10 @@ clear the nearest is), then the signs (context: the weight's level and |x| / sca
 import json
 import struct
 
-import cupy as cp
 import numpy as np
 
+from . import detmath
+from .xp import cp
 from .codecs_gguf import pack, unpack, zstd_c, zstd_d
 from .gpu2 import cum_of, store_tables, load_tables, h2d
 
@@ -1118,7 +1119,7 @@ def self_side(T, blocks, cols):
     from .gpuquant import GPUQuant
     gq = _gq()
     x = gq.dequantize(T, blocks, cols).reshape(-1, cols)
-    rms = cp.sqrt((x * x).mean(0)).astype(cp.float16)
+    rms = cp.sqrt((detmath.cols(x, True) / x.shape[0]).astype(cp.float32)).astype(cp.float16)   # detmath: GPU = CPU
     del x
     nb_row = cols // QK[T]
     rows = len(blocks) // BS[T] // nb_row

@@ -30,7 +30,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 import blake3
-import cupy as cp
+from .xp import cp
 import numpy as np
 import zstandard
 

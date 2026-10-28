@@ -14,11 +14,10 @@ Exactness: contexts are pure integer functions of side info stored in the archiv
 import json, os, re, sys, struct
 from concurrent.futures import ThreadPoolExecutor
 
-import cupy as cp
-import cupyx
 import numpy as np
 
-
+from . import detmath
+from .xp import cp, cupyx
 from .codecs_gguf import pack, pack_parts, unpack, zstd_c, zstd_d
 from .gguf_reader import GGUF, GGML_BF16
 from .gpu2 import normalize_gpu, cum_of, store_tables, load_tables, Timer, GPU2, h2d, _trim
@@ -224,22 +223,23 @@ class BF16v2:
 
     # ---------------------------------------------------------------- compression
     def _stats(self, dev, rl):
-        """side info for one tensor in row chunks: rfi (rows), cfi, scl (cols)"""
+        """side info for one tensor in row chunks: rfi (rows), cfi, scl (cols); the sums and
+        logarithms by detmath, so that the same bins come out on the GPU and the CPU"""
         u = dev.view(cp.uint16).reshape(-1, rl)
         nr = u.shape[0]; step = max(1, (16 << 20) // rl)
         rf = cp.empty(nr, cp.float64)
         for r0 in range(0, nr, step):
             w = (u[r0:r0 + step].astype(cp.uint32) << 16).view(cp.float32)
-            rf[r0:r0 + step] = cp.log2(cp.sqrt((w * w).mean(1, dtype=cp.float64)) + 1e-30)
-        rfa = cp.exp2(rf).astype(cp.float32)
+            rf[r0:r0 + step] = detmath.log2(cp.sqrt(detmath.rows(w, True) / rl) + 1e-30)
+        rfa = detmath.exp2(rf).astype(cp.float32)
         s2 = cp.zeros(rl, cp.float64); s1 = cp.zeros(rl, cp.float64)
         for r0 in range(0, nr, step):
             w = (u[r0:r0 + step].astype(cp.uint32) << 16).view(cp.float32) / rfa[r0:r0 + step, None]
-            s2 += (w * w).sum(0, dtype=cp.float64); s1 += w.sum(0, dtype=cp.float64)
-        cf = cp.log2(cp.sqrt(s2 / nr) + 1e-30)
+            s2 += detmath.cols(w, True); s1 += detmath.cols(w)
+        cf = detmath.log2(cp.sqrt(s2 / nr) + 1e-30)
         rfi = cp.clip(cp.rint(rf * K), -32768, 32767).astype(cp.int16)
         cfi = cp.clip(cp.rint(cf * K), -32768, 32767).astype(cp.int16)
-        bias = (s1 / nr) / cp.exp2(cfi.astype(cp.float64) / K)
+        bias = (s1 / nr) / detmath.exp2(cfi.astype(cp.float64) / K)
         scl = cp.clip(cp.floor(bias * 16) + 8, 0, 15).astype(cp.int8)
         return rfi, cfi, scl
 

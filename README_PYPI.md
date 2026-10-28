@@ -31,6 +31,7 @@ Requirements:
 - Python 3.11+.
 - Windows 10/11 or Linux. Tested on an RTX 5070 under Windows 10 (Python 3.11) and Ubuntu on WSL2 (Python 3.14).
 - No CUDA Toolkit is needed: NVRTC, nvJitLink and the CUDA headers come from pip.
+- No NVIDIA GPU? `--cpu` (0.5.0) runs the same kernels on the CPU: the same archives byte for byte, 10–20 times slower. It compiles the kernels once and needs a C++ compiler: `pip install "seedpack[cpu]"` (ziglang), or clang++ / g++ on the PATH.
 
 Archives are portable between operating systems: an archive packed on Windows unpacks bit-exactly on Linux, and the other way round. The first run compiles the GPU quantizers for your card (about 15 s) and caches them in `%LOCALAPPDATA%\seedpack\cache` or `~/.cache/seedpack`; set `SEEDPACK_CACHE` to move the cache.
 

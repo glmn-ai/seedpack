@@ -24,9 +24,10 @@ import lzma
 import struct
 from concurrent.futures import ThreadPoolExecutor
 
-import cupy as cp
 import numpy as np
 
+from . import detmath
+from .xp import cp
 from .codecs_gguf import pack, unpack, zstd_c, zstd_d, group_of
 from .gguf_reader import GGUF, GGML_Q8_0
 
@@ -614,18 +615,20 @@ class GPU2:
             for r0 in range(0, nrows, step):
                 r1 = min(r0 + step, nrows); b0, b1 = f + r0 * nbr, f + r1 * nbr
                 # block scale relative to its row mean, as a multiplicative factor
-                rel = cp.exp2((bits[b0:b1].reshape(r1 - r0, nbr) - row_m[rb + r0:rb + r1, None]).astype(cp.float32) / 1024)
+                # sums and logarithms by detmath: the same side information on the GPU and the CPU
+                rel = detmath.exp2((bits[b0:b1].reshape(r1 - r0, nbr) - row_m[rb + r0:rb + r1, None]).astype(cp.float32)
+                                   / 1024).astype(cp.float32)
                 w = (q[b0:b1].astype(cp.float32).reshape(r1 - r0, nbr, 32) * rel[:, :, None]).reshape(r1 - r0, rowlen)
-                s1 += w.sum(0); s2 += (w * w).sum(0)
+                s1 += detmath.cols(w); s2 += detmath.cols(w, True)
                 del w, rel
             rb += nrows
             ms = (s2 / nrows).astype(cp.float32)
-            cf = cp.log2(cp.sqrt(ms) + 1e-6)
+            cf = detmath.log2(cp.sqrt(ms) + 1e-6)
             ci = cp.clip(cp.rint(cf * 8), -32768, 32767).astype(cp.int16)
             cfi_l.append(ci)
             bias = (s1 / nrows).astype(cp.float32) / cp.sqrt(ms + 1e-12)
             scls_l.append(cp.clip(cp.floor(bias * 16) + 8, 0, 15).astype(cp.uint8))
-            off.append(int(ci.astype(cp.float32).mean() * 128) - 32 * 128)
+            off.append(int(float(detmath.total(ci.astype(cp.float32))) / len(ci) * 128) - 32 * 128)
             f += nb
             _trim()
         cfi = cp.concatenate(cfi_l); scls = cp.concatenate(scls_l)
@@ -748,9 +751,9 @@ class GPU2:
         cp.add.at(cg, grp, ct)
 
         def bits_under(c, p_counts):
-            tot = p_counts.sum(-1, keepdims=True)
-            lp = cp.where(p_counts > 0, cp.log2(p_counts / cp.maximum(tot, 1)), 0)
-            return -(c * lp).sum((-1, -2))
+            tot = p_counts.sum(-1, keepdims=True)            # (sums of counts: exact)
+            lp = cp.where(p_counts > 0, detmath.log2(p_counts / cp.maximum(tot, 1)), 0)
+            return -detmath.rows((c * lp).reshape(len(c), -1))
         own = bits_under(ct, ct)
         shared = bits_under(ct, cg[grp])
         table_bits = (ct > 0).sum((-1, -2)) * 12.0          # ~1.5 bytes per stored frequency
@@ -769,12 +772,12 @@ class GPU2:
         n = allb.shape[0]
         skip = cp.zeros(n, cp.uint8)
         dups = []
-        rng = cp.random.RandomState(1234)
+        rng = np.random.RandomState(1234)          # on the host: the same hashes on the GPU and the CPU
         for i, (o, nbytes, rowlen, grp) in enumerate(layout["t"]):
             nbr = rowlen // 32
             f = int(meta["first"][i]); nb = int(meta["nblocks"][i])
             rows = allb[f:f + nb].reshape(nb // nbr, nbr * 34).view(cp.uint64)
-            mult = rng.randint(1, 2**62, size=rows.shape[1], dtype=cp.int64).astype(cp.uint64) | cp.uint64(1)
+            mult = cp.asarray(rng.randint(1, 2**62, size=rows.shape[1], dtype=np.int64).astype(np.uint64) | np.uint64(1))
             h = (rows * mult[None, :]).sum(1).get()
             _, first_idx, inv = np.unique(h, return_index=True, return_inverse=True)
             src = first_idx[inv]

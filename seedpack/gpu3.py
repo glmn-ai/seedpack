@@ -16,9 +16,10 @@ the decoder runs one predict + decode kernel pair per wave.
 import json
 import struct
 
-import cupy as cp
 import numpy as np
 
+from . import detmath
+from .xp import cp
 from .codecs_gguf import pack, unpack, zstd_c, zstd_d
 from .gpu2 import GPU2, normalize_gpu, cum_of, PB, store_tables, load_tables, _trim, parse_layout, fill_rest
 
@@ -228,7 +229,9 @@ extern "C" __global__ void dec_c(const unsigned char* in, const unsigned long lo
 """
 
 _cmods = {}
-PRED_MEM = 7          # GPU bytes per tensor byte while its rows are planned (f32 rows, fp16 copy, ...)
+PRED_MEM = 7          # GPU bytes per tensor byte while its rows are planned (f32 rows, int8 copy, ...)
+PRED_MAX = 8 << 30    # tensors planned only up to PRED_MEM * bytes <= this: a fixed limit, not the free
+                      # memory, so that the archive is the same on every GPU (and with --cpu)
 
 
 def ckern(name, preda=False):
@@ -270,37 +273,38 @@ class GPU3(GPU2):
         return cp.clip(cp.rint(coef * 64), -127, 127) / 64
 
     def _plan_tensor(self, W, valid):
-        """kNN in earlier waves + least squares -> parents (n,K), coefs (n,K), fbin (n,), est. gain bits."""
+        """kNN in earlier waves + least squares -> parents (n,K), coefs (n,K), fbin (n,), est. gain bits.
+        Every sum, fit and logarithm is detmath's and the similarities are exact integers (rows
+        normalised to int8), so that the plan is the same on the GPU and the CPU."""
         n, C = W.shape
         P, K, NC = self.WAVES, self.K, self.NCAND
         wave = (cp.arange(n) * P) // n
         wstart = cp.searchsorted(wave, wave, side="left").astype(cp.int32)       # first row of the row's wave
-        vf = valid.astype(cp.float32)
-        mu = (vf @ W) / max(float(vf.sum()), 1.0)
-        col_w = cp.zeros(C, cp.float64)
-        for i in range(0, n, 8192):                                   # sum of squares in slices
-            col_w += (vf[i:i + 8192] @ (W[i:i + 8192] * W[i:i + 8192])).astype(cp.float64)
+        nvalid = float(int(valid.sum()))
+        mu = (detmath.cols(W, mask=valid) / max(nvalid, 1.0)).astype(cp.float32)
+        col_w = detmath.cols(W, True, mask=valid)
         W -= mu                                                       # centred in place
         Wc = W
-        Wh = cp.empty((n, C), cp.float16)
+        Wq = cp.empty((n, C), cp.int8)
         for i in range(0, n, 8192):
             x = Wc[i:i + 8192]
-            Wh[i:i + 8192] = (x / cp.maximum(cp.linalg.norm(x, axis=1, keepdims=True), 1e-12)).astype(cp.float16)
-        Wh[~valid] = 0
+            nrm = cp.maximum(cp.sqrt(detmath.rows(x, True)), 1e-12)[:, None]
+            Wq[i:i + 8192] = cp.clip(cp.rint(x / nrm * 127), -127, 127).astype(cp.int8)
+        Wq[~valid] = 0
         cand = cp.full((n, NC), -1, cp.int32)
-        CH = 1024
+        CH, NONE = 512, -(1 << 30)
         cols = cp.arange(n)
         for i in range(0, n, CH):
             j = min(i + CH, n); rows = cp.arange(j - i)
             if int(wstart[j - 1]) == 0:
                 continue
-            S = Wh[i:j] @ Wh[:int(wstart[j - 1])].T
-            S = cp.where((cols[None, :S.shape[1]] < wstart[i:j, None]) & valid[None, :S.shape[1]], S, cp.float16(-2))
+            S = detmath.sim8(Wq[i:j], Wq[:int(wstart[j - 1])])
+            S = cp.where((cols[None, :S.shape[1]] < wstart[i:j, None]) & valid[None, :S.shape[1]], S, NONE)
             for k in range(min(NC, K)):             # only the K best candidates become parents
                 m = cp.argmax(S, 1)
-                ok = S[rows, m] > -1
+                ok = S[rows, m] > NONE
                 cand[i:j, k] = cp.where(ok, m, -1).astype(cp.int32)
-                S[rows, m] = -2
+                S[rows, m] = NONE
         par = cand[:, :K].copy()
         frac = cp.ones(n, cp.float32)
         coefs = cp.zeros((n, K), cp.float32)
@@ -308,7 +312,7 @@ class GPU3(GPU2):
         col_res = cp.zeros(C, cp.float64)
         for i in range(0, n, 2048):
             j = min(i + 2048, n)
-            y = Wc[i:j]; yy = cp.maximum((y * y).sum(1), 1e-12)
+            y = Wc[i:j]; yy = cp.maximum(detmath.rows(y, True), 1e-12)
             Xa = Wc[cp.maximum(par[i:j], 0)] * (par[i:j] >= 0)[..., None]
             best = cp.ones(j - i, cp.float32); bestk = cp.zeros(j - i, cp.int32); bestc = cp.zeros((j - i, K), cp.float32)
             ks = range(1, K + 1) if self.ADAPTIVE_K else (K,)
@@ -316,13 +320,15 @@ class GPU3(GPU2):
             best_cost = cp.zeros(j - i, cp.float32)                              # cost (bits) of k=0
             res_best = y.copy()
             for k in ks:
-                X = Xa[:, :k]
-                A = cp.einsum('ckd,cld->ckl', X, X) + 1e-3 * cp.eye(k, dtype=cp.float32)[None]
-                c = cp.linalg.solve(A, cp.einsum('ckd,cd->ck', X, y)[..., None])[..., 0]
+                X = cp.ascontiguousarray(Xa[:, :k])
+                A = detmath.gram(X) + 1e-3 * cp.eye(k, dtype=cp.float32)[None]
+                c = detmath.solve(A, detmath.bdot(X, y))
                 c = self._quant_coef(c)
-                res = y - cp.einsum('ck,ckd->cd', c, X)
-                f = cp.clip((res * res).sum(1) / yy, 1e-3, 4)
-                cost = 0.5 * cp.log2(f) * (C - C // 32) + k * cost_side           # relative to no prediction
+                res = y.copy()
+                for kk in range(k):                                                 # in a fixed order
+                    res = res - c[:, kk, None] * X[:, kk, :]
+                f = cp.clip(detmath.rows(res, True) / yy, 1e-3, 4)
+                cost = 0.5 * detmath.log2(f) * (C - C // 32) + k * cost_side       # relative to no prediction
                 better = cost < best_cost
                 best_cost = cp.where(better, cost, best_cost)
                 best = cp.where(better, f, best); bestk = cp.where(better, k, bestk)
@@ -330,20 +336,19 @@ class GPU3(GPU2):
                 bestc = cp.where(better[:, None], cpad, bestc)
                 res_best = cp.where(better[:, None], res, res_best)
             frac[i:j] = best; kuse[i:j] = bestk; coefs[i:j] = bestc
-            vr = valid[i:j, None]
-            col_res += cp.where(vr, res_best * res_best, 0).sum(0)
+            col_res += detmath.cols(res_best, True, mask=valid[i:j])
         valid_par = (cp.arange(K)[None, :] < kuse[:, None]) & valid[:, None]
         par = cp.where(valid_par, par, -1).astype(cp.int32)
         coefs = cp.where(valid_par, coefs, 0).astype(cp.float32)
         frac = cp.where(kuse > 0, frac, 1.0)
         if self.COLRES:
             # column factor of the residual (1/8 octave of RMS) and row class relative to the mean
-            gfrac = float(col_res.sum() / max(float(col_w.sum()), 1e-30))
-            cadj = cp.clip(cp.rint(4 * cp.log2(cp.maximum(col_res / cp.maximum(col_w, 1e-30), 1e-6))), -60, 0).astype(cp.int8)
-            fbin = cp.clip(cp.rint(cp.log2(frac / max(gfrac, 1e-6)) * 4), -40, 20).astype(cp.int8)
+            gfrac = float(detmath.total(col_res)) / max(float(detmath.total(col_w)), 1e-30)
+            cadj = cp.clip(cp.rint(4 * detmath.log2(cp.maximum(col_res / cp.maximum(col_w, 1e-30), 1e-6))), -60, 0).astype(cp.int8)
+            fbin = cp.clip(cp.rint(detmath.log2(frac / max(gfrac, 1e-6)) * 4), -40, 20).astype(cp.int8)
         else:
             cadj = cp.zeros(C, cp.int8)
-            fbin = cp.clip(cp.rint(cp.log2(frac) * 4), -40, 0).astype(cp.int8)
+            fbin = cp.clip(cp.rint(detmath.log2(frac) * 4), -40, 0).astype(cp.int8)
         return par, coefs, fbin, mu.astype(cp.float32), cadj
 
     def _prepare_extra(self, env):
@@ -356,8 +361,8 @@ class GPU3(GPU2):
             nrows = nb // nbr
             if nrows < 2 * self.WAVES:
                 continue
-            if PRED_MEM * nb * 34 > cp.cuda.runtime.memGetInfo()[0] + cp.get_default_memory_pool().free_bytes():
-                continue                      # its row matrix would not fit: coded without prediction
+            if PRED_MEM * nb * 34 > PRED_MAX:
+                continue                      # its row matrix would be too big: coded without prediction
             W = self._row_matrix(allb, f, nb, rowlen)
             valid = skip[f:f + nb].reshape(nrows, nbr)[:, 0] == 0
             par, coefs, fbin, mu, cadj = self._plan_tensor(W, valid)
@@ -584,9 +589,11 @@ METHODS3 = [M17RowPred(), M18Compact(), M19PredMax(), M20TokPairs(), M21ColRes()
 
 class Q8Parts:
     """M21 over a file in parts of whole Q8_0 tensors, so GPU memory is bounded by the part size
-    (budget bytes; default: a sixth of the free GPU memory) instead of the file size. Each part is
-    an independent M21 stream with its own tables; the bytes around the tensors are stored once."""
+    (budget bytes; default PART: a fixed size, so that the parts, and the archive, are the same on
+    every GPU and with --cpu) instead of the file size. Each part is an independent M21 stream with
+    its own tables; the bytes around the tensors are stored once."""
     MEM = 6              # peak GPU bytes per part byte (blocks + encoder output buffers + streams)
+    PART = 1 << 30       # Q8_0 bytes per part: at most ~6 GB of GPU memory
 
     def __init__(self, budget=None):
         self.c = M22Fast()
@@ -594,10 +601,7 @@ class Q8Parts:
         self.parts = 0
 
     def _budget(self):
-        if self.budget:
-            return self.budget
-        _trim()
-        return max(64 << 20, cp.cuda.runtime.memGetInfo()[0] // self.MEM)
+        return self.budget or self.PART
 
     def compress(self, data, with_rest=True):
         """with_rest=False: only the Q8_0 tensors (the caller stores the other bytes)"""

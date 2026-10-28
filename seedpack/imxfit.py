@@ -10,11 +10,13 @@ The importance enters only through the block scales, one column's importance is 
 row (thousands of blocks), and the legacy quantisers' scale is a weighted least-squares fit: so it
 is fitted back from the quant itself (ls_gram, ls_solve) and checked on other rows (equal_blocks).
 Tensors with the same input (gate and up, q / k / v) share their importance: one fit serves them
-all, in every file made with that matrix. The decoder only reads the fitted vectors back.
+all, in every file made with that matrix. The decoder only reads the fitted vectors back. The sums
+are detmath's and the eigenvectors numpy's (on the host): the same fit on the GPU and with --cpu.
 """
-import cupy as cp
 import numpy as np
 
+from . import detmath
+from .xp import cp
 from .requant import QFUN
 
 # Least squares. The legacy quantisers' block scale is the weighted least-squares fit of the
@@ -41,12 +43,14 @@ def ls_gram(gq, T, X, F):
     m = Fb[:, :, 2:4].copy().view(cp.float16).astype(cp.float32) if two else cp.zeros_like(d)
     l = cp.rint((v - m) / cp.where(d == 0, 1, d))
     xb = X.reshape(R, nb, qk)
-    c = cp.sqrt(((X * X).sum(1) / cols)[:, None, None] + xb * xb)
+    c = cp.sqrt((detmath.rows(X, True) / cols).astype(cp.float32)[:, None, None] + xb * xb)
     res = xb - v
     G = cp.zeros((nb, qk, qk), cp.float64)
     for e in ([c * res * l, c * res * (m != 0)] if two else [c * res * l]):
-        e = e / cp.maximum(cp.sqrt((e * e).sum(2, keepdims=True)), 1e-30)
-        G += cp.einsum("rbi,rbj->bij", e, e).astype(cp.float64)
+        nrm = cp.sqrt(detmath.rows(e.reshape(-1, qk), True)).astype(cp.float32).reshape(R, nb, 1)
+        e = (e / cp.maximum(nrm, 1e-30)).astype(cp.float32)
+        # sum over the rows of each block column's outer products: detmath.gram over (block, i) x rows
+        G += detmath.gram(cp.ascontiguousarray(e.transpose(1, 2, 0))).astype(cp.float64)
     return G
 
 
@@ -54,13 +58,13 @@ def ls_solve(G, e0):
     """importance (float32 numpy) from summed conditions G, each block of columns scaled to the sum
     of e0's there"""
     nb, qk = G.shape[0], G.shape[1]
-    _, V = cp.linalg.eigh(G)
+    _, V = np.linalg.eigh(cp.asnumpy(G))
     q = V[:, :, 0]
-    q = q * cp.sign(q.sum(1, keepdims=True))
-    q = cp.maximum(q, 1e-6 * cp.abs(q).max(1, keepdims=True))
-    e0 = cp.asarray(e0, cp.float64).reshape(nb, qk)
+    q = q * np.sign(q.sum(1, keepdims=True))
+    q = np.maximum(q, 1e-6 * np.abs(q).max(1, keepdims=True))
+    e0 = np.asarray(e0, np.float64).reshape(nb, qk)
     q = q / q.sum(1, keepdims=True) * e0.sum(1, keepdims=True)
-    return cp.asnumpy(q.reshape(-1)).astype(np.float32)
+    return q.reshape(-1).astype(np.float32)
 
 
 def equal_blocks(gq, T, X, F, e):

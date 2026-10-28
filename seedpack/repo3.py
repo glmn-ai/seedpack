@@ -24,7 +24,7 @@ import time
 from collections import Counter, deque, namedtuple
 from concurrent.futures import Future, ThreadPoolExecutor
 
-import cupy as cp
+from .xp import cp
 import blake3
 import numpy as np
 import zstandard
@@ -1400,9 +1400,10 @@ class M28RepoGPU:
             if not any(bnames[i] in self.seed_files for i in g):
                 starts = np.cumsum([0] + [bsize[i] for i in g[:-1]]).tolist()
                 joined.append({"parts": [[i, s] for i, s in zip(g, starts)], "size": sum(bsize[i] for i in g)})
-        # a split model too big for the GPU is streamed whole: its shards are read from their files
-        # (and stay off the GPU), even those that would fit
-        hosted = {i for g in joined if not _fits_gpu(g["size"]) for i, _ in g["parts"]}
+        # every base but a seed is streamed (coded as it is read, its files derived from it window by
+        # window), whatever the GPU's memory or, with --cpu, the host's: the archive does not depend
+        # on it, only the windows' size does. A split model's shards are read from their files.
+        hosted = {i for g in joined for i, _ in g["parts"]}
         bpaths += [[(s, bpaths[i]) for i, s in g["parts"]] for g in joined]
         bsize += [g["size"] for g in joined]
 
@@ -1422,9 +1423,9 @@ class M28RepoGPU:
         names = list(files)
         fsize = [os.path.getsize(files[n]) for n in names]
         rd = ThreadPoolExecutor(1)
-        # a base too big for the GPU is a big model: its coding (output and buffers of gigabytes)
-        # is finished before the derived files are read, not overlapped with them
-        huge = any(not _fits_gpu(os.path.getsize(p)) for p in bases.values()) or bool(hosted)
+        # a streamed base is a big model's: its coding (output and buffers of gigabytes) is finished
+        # before the derived files are read, not overlapped with them
+        huge = any(n not in self.seed_files for n in bases) or bool(hosted)
         # the first derived file is read while the bases are coded
         reads = {0: rd.submit(read, names[0])} if names and not huge else {}
         kept = []
@@ -1481,17 +1482,17 @@ class M28RepoGPU:
 
         for i, (name, path) in enumerate(bases.items()):
             rd_ = None
-            if _fits_gpu(os.path.getsize(path)) and i not in hosted:
+            if name in self.seed_files and i not in hosted:
                 data = _read_file(path)
                 seen(name, data)
             else:
-                # a base the GPU has no room for: mapped (its header and gaps are read from the
-                # mapping), its tensors read explicitly by the coder (and hashed on the way)
+                # a streamed base: mapped (its header and gaps are read from the mapping), its
+                # tensors read explicitly by the coder (and hashed on the way)
                 data = _map_file(path)
                 rd_ = _HashingReader(path, on_stream(name) if on_stream else None)
                 if on_stream is None:
                     seen(name, data)
-            kept.append(_keep_base(data, host=i in hosted))
+            kept.append(_keep_base(data, host=i in hosted or name not in self.seed_files))
             if rd_ is not None and put_stream is not None and isinstance(self.base_codec, R2Base) \
                     and name not in self.seed_files and big1.index is None:
                 big1.index = i
@@ -1583,9 +1584,8 @@ class M28RepoGPU:
         elif huge:
             put_bases(wait=True)                # its coded form out of memory before the files
 
-        # the files derived from a base too big for the GPU: all together, window by window
-        large = [k for k in range(len(bpaths)) if not (k < len(bnames) and bnames[k] in self.seed_files)
-                 and not _fits_gpu(bsize[k])]
+        # the files derived from a streamed base: all together, window by window
+        large = [k for k in range(len(bpaths)) if not (k < len(bnames) and bnames[k] in self.seed_files)]
         streamed = {}
         if large and (on_data is None or on_stream is not None):
             per = {}
@@ -1676,8 +1676,9 @@ class M28RepoGPU:
     PRED_WINDOW = 3 << 30                     # first predictions of a window's files (bytes) at most
 
     def _window_bytes(self):
-        """the window size: WINDOW, less on a GPU with less free memory (the quantisers' float32
-        copy of a launch and the QR coder's buffers come on top of the window)"""
+        """the decoder's window size: WINDOW, less on a GPU with less free memory (the quantisers'
+        float32 copy of a launch and the QR coder's buffers come on top of the window); the encoder
+        always uses WINDOW"""
         return int(max(64 << 20, min(self.WINDOW, (_dev_free() - GPU_RESERVE) // 4)))
 
     @staticmethod
@@ -1955,7 +1956,9 @@ class M28RepoGPU:
             # the window's distinct first predictions (each file's tensors, repeats once)
             pred = [sum({(st.tens[n].type, self._v0(st.tens[n], st.kind[n], st.k)): st.tens[n].nbytes
                          for st in sts if n in st.tens}.values()) for n in order]
-            wlim = self._window_bytes()
+            # fixed, not the free memory's: the windows decide the QR batches (and the tensors an
+            # importance fit sees), so with them the archive would differ from GPU to GPU (or --cpu)
+            wlim = self.WINDOW
             wins = self._windows([by_name[n].nbytes for n in order], (), wlim, pred)
             wb = [sum(by_name[n].nbytes for n in order[a:z]) for a, z in wins]
             jobs = []                             # (window, file, start, end) in processing order

@@ -13,7 +13,9 @@ All BF16 GGUFs among the inputs (the model, mmproj) are coded as "bases"; every 
 stored as the difference to what llama.cpp's quantiser produces from its base (GPU, bit-exact),
 so a whole repository of quantisations costs about as much as its BF16 file. Any other file is
 stored with LZMA (small files) or zstd. Extraction is always byte-exact and checked by BLAKE3 (or SHA-256) checksums.
-Requires an NVIDIA GPU (CUDA, CuPy).
+Runs on an NVIDIA GPU (CUDA, CuPy); with --cpu on the CPU instead: slower, the same archives byte
+for byte (the kernels are compiled for the CPU once, which needs a C++ compiler: pip install
+"seedpack[cpu]"). SOURCE_DATE_EPOCH fixes the archive's creation time.
 """
 import argparse
 import fnmatch
@@ -132,12 +134,23 @@ def open_archive(spec, index_only=False):
 
 
 def gpu_check():
+    """the array module: CuPy, or with --cpu (SEEDPACK_CPU=1) the CPU stand-in, which needs a C++
+    compiler for the kernels"""
+    if os.environ.get("SEEDPACK_CPU") == "1":
+        from . import cpukernels
+        try:
+            cc = cpukernels.compiler()
+        except RuntimeError as e:
+            fail(str(e))
+        from .xp import cp
+        print(f"  running on the CPU: {cpukernels.threads()} threads, kernels built with {os.path.basename(cc[-1])}")
+        return cp
     try:
         import cupy as cp
         cp.cuda.runtime.getDeviceCount()
         return cp
     except Exception as e:                    # no driver / no device / no CuPy
-        fail(f"an NVIDIA GPU with CUDA is required ({e.__class__.__name__}: {e})")
+        fail(f"an NVIDIA GPU with CUDA is required, or run with --cpu ({e.__class__.__name__}: {e})")
 
 
 # ---------------------------------------------------------------------------------- inputs
@@ -192,6 +205,15 @@ def gguf_role(path):
 
 
 # ---------------------------------------------------------------------------------- pack
+def created():
+    """the archive's creation time: now, or $SOURCE_DATE_EPOCH (UTC) for byte-identical archives
+    of the same inputs (reproducible builds)"""
+    epoch = os.environ.get("SOURCE_DATE_EPOCH")
+    if epoch:
+        return time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(int(epoch)))
+    return time.strftime("%Y-%m-%dT%H:%M:%S")
+
+
 def cmd_pack(a):
     cp = gpu_check()
     from .container import Writer
@@ -256,7 +278,7 @@ def cmd_pack(a):
         for n, p in files.items():
             catalog.append({"name": n, "size": os.path.getsize(p), "hash": hashes[n],
                             "role": "derived, M21" if n in m.q8_files else roles[n] or "file", "stored": m.sizes.get(n)})
-        w.close({"tool": TOOL, "method": m.name, "created": time.strftime("%Y-%m-%dT%H:%M:%S"), "hash": algo,
+        w.close({"tool": TOOL, "method": m.name, "created": created(), "hash": algo,
                  "files": catalog, "total": total})
     except BaseException:
         w.abort()
@@ -441,6 +463,10 @@ def cmd_list(a):
           f"({100 * r.size / meta['total']:.2f}%)")
 
 
+CPU_HELP = ("run on the CPU instead of an NVIDIA GPU: 10-20x slower, the same archives byte for byte (needs a C++ "
+            "compiler once: pip install \"seedpack[cpu]\", or clang++ / g++; threads: $SEEDPACK_THREADS)")
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(prog="seedpack", description=__doc__.split("\n\n")[0],
                                 formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -457,6 +483,7 @@ def main(argv=None):
     s.add_argument("--cache", type=int, default=None, help="prediction cache cap in MB (default: none, whatever the memory allows)")
     s.add_argument("-f", "--force", action="store_true", help="overwrite the archive")
     s.add_argument("-q", "--quiet", action="store_true", help="no per-file progress")
+    s.add_argument("--cpu", action="store_true", help=CPU_HELP)
     s.set_defaults(fn=cmd_pack)
     for name, alias, fn, hlp in (("unpack", "x", cmd_unpack, "extract all or selected files"),
                                  ("test", "t", cmd_test, "decompress in memory and verify checksum")):
@@ -469,11 +496,14 @@ def main(argv=None):
         else:
             s.set_defaults(force=True)
         s.add_argument("--cache", type=int, default=None, help="prediction cache cap in MB (default: none, whatever the memory allows)")
+        s.add_argument("--cpu", action="store_true", help=CPU_HELP)
         s.set_defaults(fn=fn)
     s = sub.add_parser("list", aliases=["l"], help="list the files in an archive")
     s.add_argument("archive", help="a .seedpack file or hf://OWNER/REPO[/FILE.seedpack][@REVISION]")
     s.set_defaults(fn=cmd_list)
     a = p.parse_args(argv)
+    if getattr(a, "cpu", False):
+        os.environ["SEEDPACK_CPU"] = "1"       # before the codecs are imported (xp.py)
     try:
         a.fn(a)
     except KeyboardInterrupt:

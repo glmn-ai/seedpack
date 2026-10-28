@@ -17,7 +17,7 @@ import json
 import struct
 from concurrent.futures import ThreadPoolExecutor
 
-import cupy as cp
+from .xp import cp
 import numpy as np
 
 from . import rans

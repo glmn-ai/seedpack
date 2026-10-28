@@ -58,6 +58,8 @@ pip install seedpack
 
 You need an NVIDIA GPU (Turing or newer) with a CUDA 13 driver (R580+) and Python 3.11+. The CUDA Toolkit is not needed: NVRTC, nvJitLink and the CUDA headers come from pip. Tested on an RTX 5070 under Windows 10 (Python 3.11) and Ubuntu on WSL2 (Python 3.14). Archives are portable between operating systems: one packed on Windows unpacks bit-exactly on Linux, and the other way round. On the first run the quantizers are compiled for your GPU (about 15 s) and cached in `%LOCALAPPDATA%\seedpack\cache` (or `~/.cache/seedpack`, or `SEEDPACK_CACHE`).
 
+**Without an NVIDIA GPU** (since 0.5.0): add `--cpu` to `pack`, `unpack` or `test`. The same kernels then run on the CPU and give the same bytes: an archive made either way unpacks on both, and the same inputs make the same archive on the GPU and with `--cpu` (`SOURCE_DATE_EPOCH` fixes its creation time). The kernels are compiled for the CPU once, which needs a C++ compiler: `pip install "seedpack[cpu]"` brings one (ziglang), or put clang++ / g++ on the PATH. It is slower: on an i7-8700K (12 threads) all of unsloth/Qwen3-0.6B-GGUF packs in 3 min 16 s instead of 18 s and unpacks in under 3 min instead of 8 s, most of it in llama.cpp's own quantizers. It takes as much RAM as is free, half of it in place of the GPU's memory; `SEEDPACK_THREADS` and `SEEDPACK_CPU_MEM` (MB) limit it.
+
 ## Usage
 
 ```
@@ -106,6 +108,8 @@ Publishing: `python -m build`, then `twine upload dist/*`.
 - `seedpack/cli.py` — the CLI (`seedpack`, or `python -m seedpack`); `seedpack/container.py` — the `.seedpack` format (chunks plus an index at the end, random access).
 - `seedpack/repo3.py` — the core: M28/M29 (bases, quant prediction, residuals, pipeline).
 - `seedpack/gpuquant.py` — CUDA code generated from `ggml-quants.c`, bit-exact with the CPU; quantizer variants of older llama.cpp versions.
+- `seedpack/xp.py` — the array module: CuPy, or with `--cpu` `seedpack/cpu.py` (a NumPy stand-in for it) and `seedpack/cpukernels.py` (the same CUDA kernels compiled for the CPU, divisions by a constant done as ptxas does them).
+- `seedpack/detmath.py` — the coders' sums, logarithms, small fits and row similarities, computed the same way on the GPU and the CPU, so that both make the same archive.
 - `seedpack/ptxfix.py` — a workaround for a ptxas bug in division by a constant.
 - `seedpack/bf16v2.py` — the BF16 codec (R2); `seedpack/gpu_bf16.py` — M24.
 - `seedpack/gpu3.py` (based on `seedpack/gpu2.py`) — M21/M22: a Q8_0 codec without a base (context rANS, row prediction from similar rows).
@@ -121,7 +125,7 @@ Publishing: `python -m build`, then `twine upload dist/*`.
 
 ## Limitations
 
-- An NVIDIA GPU is required.
+- Without an NVIDIA GPU, `--cpu` makes the same archives, 10–20 times slower.
 - Quants without a BF16 model: the highest quant becomes the seed (most bits per weight: UD-Q8_K_XL, Q8_0, … Q4); its tensors are dequantized and the other quants are derived from them. Without an imatrix the quantizers run with unit weights or without weights, whichever gives the smaller residual for each tensor. The Qwen3.5-2B quant set without BF16 and imatrix (21 files, 28 GB) compresses to 17%; lmz reaches 40%.
 - If the published imatrix differs from the one used for quantization (as with Qwen3.5), some blocks are predicted inexactly. Correctness does not suffer, only the size grows: for Qwen3.5-2B all quants together cost 33 MB. When a quant's GGUF names another imatrix (a different chunk count, as Unsloth's plain Q4_0 / Q4_1 do), that imatrix is fitted back from the quant itself and stored in the archive.
 - Tested on Windows 10 and Ubuntu (WSL2) with an RTX 5070; other GPUs are on the roadmap (ROADMAP, item 22).

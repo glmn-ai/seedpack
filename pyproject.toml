@@ -40,6 +40,10 @@ dependencies = [
     "huggingface_hub>=0.30",
 ]
 
+[project.optional-dependencies]
+# --cpu compiles the kernels for the CPU: a C++ compiler from PyPI (any g++ / clang++ also works)
+cpu = ["ziglang>=0.13"]
+
 [project.urls]
 Homepage = "https://github.com/glmn-ai/seedpack"
 Source = "https://github.com/glmn-ai/seedpack"

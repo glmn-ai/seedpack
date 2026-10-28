@@ -14,10 +14,11 @@ import json
 import struct
 from concurrent.futures import ThreadPoolExecutor
 
-import cupy as cp
 import numpy as np
 import zstandard
 
+from . import detmath
+from .xp import cp
 from .codecs_gguf import pack, unpack, zstd_c, zstd_d
 from .gguf_reader import GGUF, GGML_BF16, GGML_Q8_0
 from .gpu2 import (header_pairs_c, header_pairs_d, xz_chunks_c, xz_chunks_d, rest_of,
@@ -355,12 +356,14 @@ class M24BF16GPU:
         for off, nbytes, rowlen, _ in layout["t"]:
             u = dev[off:off + nbytes].view(cp.uint16).reshape(-1, rowlen)
             w = (u.astype(cp.uint32) << 16).view(cp.float32)
-            rf = cp.log2(cp.sqrt((w * w).mean(1, dtype=cp.float64)) + 1e-30)
-            wn = w / cp.exp2(rf).astype(cp.float32)[:, None]
-            cf = cp.log2(cp.sqrt((wn * wn).mean(0, dtype=cp.float64)) + 1e-30)
+            nr = w.shape[0]
+            # sums and logarithms by detmath: the same bins on the GPU and the CPU
+            rf = detmath.log2(cp.sqrt(detmath.rows(w, True) / rowlen) + 1e-30)
+            wn = w / detmath.exp2(rf).astype(cp.float32)[:, None]
+            cf = detmath.log2(cp.sqrt(detmath.cols(wn, True) / nr) + 1e-30)
             rfi = cp.clip(cp.rint(rf * 4), -32768, 32767).astype(cp.int16)
             cfi = cp.clip(cp.rint(cf * 4), -32768, 32767).astype(cp.int16)
-            bias = wn.mean(0, dtype=cp.float64) / cp.exp2(cfi.astype(cp.float64) / 4)
+            bias = (detmath.cols(wn) / nr) / detmath.exp2(cfi.astype(cp.float64) / 4)
             rfi_l.append(rfi); cfi_l.append(cfi)
             sc_l.append(cp.clip(cp.floor(bias * 16) + 8, 0, 15).astype(cp.int8))
             del u, w, wn

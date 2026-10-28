@@ -10,9 +10,6 @@ import glob
 import os
 import re
 
-import cupy as cp
-from cupy_backends.cuda.libs import nvrtc
-
 _DIV = re.compile(r"div\.rn\.f32\s+(%\w+),\s*(%\w+),\s*0[fF]([0-9A-Fa-f]{8});")
 
 
@@ -27,6 +24,8 @@ def _nvjitlink():
 
 
 def ptx_of(src, options):
+    import cupy as cp                      # GPU only (imported here: --cpu runs without CUDA)
+    from cupy_backends.cuda.libs import nvrtc
     cc = cp.cuda.Device().compute_capability
     prog = nvrtc.createProgram(src, "k.cu", [], [])
     try:
@@ -57,6 +56,7 @@ def link_cubin(ptx, ptx_version="9.0"):
     """PTX -> cubin with nvJitLink (its PTX ISA may be older than NVRTC's: the version is lowered)."""
     ptx = re.sub(r"^\.version \d+\.\d+", f".version {ptx_version}", ptx, count=1, flags=re.M)
     L = _nvjitlink()
+    import cupy as cp
     cc = cp.cuda.Device().compute_capability
     h = ctypes.c_void_p()
     opts = (ctypes.c_char_p * 2)(f"-arch=sm_{cc}".encode(), b"-O3")

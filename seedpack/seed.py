@@ -13,7 +13,7 @@ import json
 import struct
 from concurrent.futures import ThreadPoolExecutor
 
-import cupy as cp
+from .xp import cp
 import numpy as np
 
 from .codecs_gguf import pack, unpack, zstd_c, zstd_d, group_of
