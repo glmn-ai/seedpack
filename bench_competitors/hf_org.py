@@ -28,7 +28,8 @@ SPACE = f"{ORG}/README"
 GITHUB = "https://github.com/glmn-ai/seedpack"
 PYPI = "https://pypi.org/project/seedpack/"
 # all of unsloth/Qwen3-0.6B-GGUF with other archivers (results_hf06.json): label, key
-ARCHIVERS = [("SeedPack", "SeedPack"), ("lmz 1.3", "lmz 1.3.0"), ("HF Xet (estimate)", "HF Xet (estimate)"),
+ARCHIVERS = [("SeedPack", "SeedPack"), ("lmz 1.3", "lmz 1.3.0"), ("ggufpacker 0.4", "ggufpacker 0.4.2"),
+             ("HF Xet (estimate)", "HF Xet (estimate)"),
              ("zstd -19 --long", "zstd 1.5.7 -19 --long=30"), ("7-Zip -mx9", "7-Zip 23.01 -mx9 (LZMA2)"),
              ("ZipNN 0.5", "ZipNN 0.5.4"), ("gzip -9", "gzip -9"), ("lz4 -9", "lz4 1.9.4 -9 (HC)")]
 NB = " "
@@ -53,6 +54,13 @@ t27 = json.load(open(os.path.join(HERE, "results_hf27b.json")))
 
 def gb(b):
     return size(b).replace(NB, " ")
+
+
+def dur(s):
+    """pack time: seconds under a minute, else minutes; None (an estimate) -> a dash"""
+    if s is None:
+        return "—"
+    return f"{s:.0f}{NB}s" if s < 60 else f"{s / 60:.1f}{NB}min"
 
 
 STYLE = """
@@ -130,12 +138,21 @@ def bench():
       <div class="rx g">{r["n_in"] / r["archive"]:.1f}×</div>
     </div>""")
     bars = []
-    vals = [(lab, 100 * res06[f"hf-0.6b | {key}"]["archive"] / res06[f"hf-0.6b | {key}"]["size"]) for lab, key in ARCHIVERS]
-    for lab, pct in vals:
+    vals = [(lab, 100 * res06[f"hf-0.6b | {key}"]["archive"] / res06[f"hf-0.6b | {key}"]["size"],
+             res06[f"hf-0.6b | {key}"].get("compress_s")) for lab, key in ARCHIVERS]
+    n06 = res06["hf-0.6b | SeedPack"]["size"]
+    bars.append(f"""
+      <div class="ar ah"><span class="al"></span><span class="at">archive, % of the {gb(n06)} repository</span>
+        <span class="av">size</span><span class="ap">pack</span></div>""")
+    for lab, pct, sec in vals:
         me = lab == "SeedPack"
         bars.append(f"""
       <div class="ar{" me" if me else ""}"><span class="al">{html.escape(lab)}</span>
-        <div class="at"><i style="width:{pct:.3f}%"></i></div><span class="av">{pct:.1f}%</span></div>""")
+        <div class="at"><i style="width:{pct:.3f}%"></i></div><span class="av">{pct:.1f}%</span>
+        <span class="ap">{dur(sec)}</span></div>""")
+    bars.append("""
+      <div class="an">Pack times on one PC (i7-8700K, 32 GB): SeedPack on its RTX 5070, the others on the CPU
+        (ZipNN in memory, without disk I/O).</div>""")
     tiles = [(f"Pack all {gb(big['n_in'])}", f"{t27['pack_s'] / 60:.1f}{NB}min", f"{big['n_in'] / t27['pack_s'] / 1e6:,.0f}{NB}MB/s"),
              ("Peak GPU memory", f"{t27['peak_vram_pack_gb']:.1f}{NB}GB", "12 GB card, 54.7 GB model"),
              ("Stored once", f"{t27['references']:,}", "tensors the quants share")]
@@ -170,9 +187,15 @@ def bench():
   .at {{ flex: 1; height: 26px; border-radius: 6px; background: #161E1A; }}
   .at i {{ display: block; height: 100%; border-radius: 6px; background: #3A4741; }}
   .av {{ flex: 0 0 86px; text-align: right; font-size: 23px; font-weight: 600; color: #A9B5AE; }}
+  .ap {{ flex: 0 0 92px; text-align: right; font-size: 21px; font-weight: 500; color: #8C9891; white-space: nowrap; }}
+  .ah {{ margin-top: 0; }}
+  .ah .at {{ height: auto; background: none; font-size: 17px; font-weight: 500; color: #6F7B74; }}
+  .ah .av, .ah .ap {{ font-size: 17px; font-weight: 500; color: #6F7B74; }}
+  .an {{ margin-top: 12px; font-size: 17px; font-weight: 500; color: #6F7B74; }}
   .me .al {{ font-weight: 800; font-style: italic; font-size: 25px; color: #fff; }}
   .me .at i {{ background: linear-gradient(90deg, #9BE34A, #29C074); box-shadow: 0 0 16px rgba(110, 214, 80, .4); }}
   .me .av {{ color: #9BE34A; font-size: 25px; font-weight: 800; }}
+  .me .ap {{ color: #9BE34A; font-size: 23px; font-weight: 800; }}
   .speed {{ display: flex; gap: 14px; }}
   .sp {{ flex: 1; background: #141B17; border: 2px solid #212B25; border-radius: 14px; padding: 14px 18px 16px; }}
   .sl {{ font-size: 19px; font-weight: 500; color: #8C9891; }}

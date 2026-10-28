@@ -89,6 +89,14 @@
   "lossless": true,
   "size": 10949326160
  },
+ "hf-0.6b | ggufpacker 0.4.2": {
+  "archive": 4897536579,
+  "compress_s": 490.4,
+  "decompress_s": 200.8,
+  "lossless": true,
+  "note": "CPU, llama.cpp b11871 llama-quantize; 14 quants EXACT, 11 UD quants and the BF16 as zstd blobs; config.json, params, template not stored; decompress = verify (all 27 files regenerated and checked)",
+  "size": 10949326160
+ },
  "hf-0.6b | ZipNN 0.5.4": {
   "archive": 10329186097,
   "compress_s": 10.691238465999994,
